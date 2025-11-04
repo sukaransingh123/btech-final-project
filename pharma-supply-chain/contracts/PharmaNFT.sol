@@ -17,6 +17,7 @@ contract PharmaNFT is ERC721URIStorage, Ownable {
         address currentOwner;
         Role currentRole;
         string batchID;
+        string metadataHash; // SHA-256 hash of MongoDB metadata (for integrity verification)
         string metadataURI;
         string qrCodeURI;
         uint256 timestamp;
@@ -107,7 +108,7 @@ contract PharmaNFT is ERC721URIStorage, Ownable {
         emit StakeholderRegistered(user, role, pubKey);
     }
 
-    function mintBatch(string memory tokenURI, string memory batchID) public onlyManufacturer {
+    function mintBatch(string memory tokenURI, string memory batchID, string memory metadataHash) public onlyManufacturer {
         uint256 tokenId = tokenCounter++;
         _mint(msg.sender, tokenId);
         _setTokenURI(tokenId, tokenURI);
@@ -117,6 +118,7 @@ contract PharmaNFT is ERC721URIStorage, Ownable {
             currentOwner: msg.sender,
             currentRole: Role.Manufacturer,
             batchID: batchID,
+            metadataHash: metadataHash, // Store hash on-chain for verification
             metadataURI: tokenURI,
             qrCodeURI: tokenURI,
             timestamp: block.timestamp,
@@ -290,6 +292,7 @@ contract PharmaNFT is ERC721URIStorage, Ownable {
                 currentOwner: msg.sender,
                 currentRole: Role.Manufacturer,
                 batchID: string(abi.encodePacked(batches[parentId].batchID, "-C", _toString(childId))),
+                metadataHash: batches[parentId].metadataHash, // Inherit parent's metadataHash
                 metadataURI: childTokenURI,
                 qrCodeURI: childTokenURI,
                 timestamp: block.timestamp,

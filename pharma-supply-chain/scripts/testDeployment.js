@@ -52,7 +52,19 @@ async function main() {
     const batchID = `TEST_BATCH_${Date.now()}`;
     const tokenURI = "https://ipfs.io/ipfs/QmTestMetadata";
     
-    const tx = await pharma.connect(manufacturer).mintBatch(tokenURI, batchID);
+    // Generate metadata hash for integrity verification
+    const crypto = require('crypto');
+    const metadataString = JSON.stringify({
+      batchID: batchID,
+      drugName: "Test Drug",
+      manufacturingDate: new Date().toISOString(),
+      expiryDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+      quantity: 1,
+      manufacturer: manufacturer.address.toLowerCase()
+    });
+    const metadataHash = crypto.createHash('sha256').update(metadataString).digest('hex');
+    
+    const tx = await pharma.connect(manufacturer).mintBatch(tokenURI, batchID, metadataHash);
     await tx.wait();
     
     const tokenCounter = await pharma.tokenCounter();

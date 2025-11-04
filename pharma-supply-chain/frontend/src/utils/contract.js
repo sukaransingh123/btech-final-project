@@ -21,10 +21,10 @@ try {
 } catch (_) {
   // Minimal fallback ABI for local dev if ABI file not yet generated
   CONTRACT_ABI = [
-    "function mintBatch(string tokenURI, string batchID)",
+    "function mintBatch(string tokenURI, string batchID, string metadataHash)",
     "function transferBatch(uint256 tokenId, address newOwner)",
     "function verifyBatch(uint256 tokenId) returns (bool)",
-    "function getBatchDetails(uint256 tokenId) view returns (tuple(uint256 tokenId, address currentOwner, uint8 currentRole, string batchID, string metadataURI, string qrCodeURI, uint256 timestamp, address manufacturer))",
+    "function getBatchDetails(uint256 tokenId) view returns (tuple(uint256 tokenId, address currentOwner, uint8 currentRole, string batchID, string metadataHash, string metadataURI, string qrCodeURI, uint256 timestamp, address manufacturer))",
     "function getTransferHistory(uint256 tokenId) view returns (tuple(address from, address to, uint256 timestamp, uint8 fromRole, uint8 toRole)[])",
     "function getRole(address user) view returns (uint8)",
     "function tokenCounter() view returns (uint256)",

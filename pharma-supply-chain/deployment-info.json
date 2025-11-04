@@ -1,11 +1,11 @@
 {
-  "contractAddress": "0xEd05f168F4486601749d03AEec637e6E469a586F",
+  "contractAddress": "0xd36e5c231DB89afe06Ff740b958e918618EcE058",
   "deployer": "0xA91066f1782a0413e7797e3F046D6E1C96f48d87",
   "network": "Polygon Amoy Testnet",
-  "timestamp": "2025-10-26T16:05:53.374Z",
+  "timestamp": "2025-11-01T17:33:12.325Z",
   "stakeholders": {
     "owner": "0xA91066f1782a0413e7797e3F046D6E1C96f48d87",
-    "manufacturer": "0xA91066f1782a0413e7797e3F046D6E1C96f48d87",
+    "manufacturer": "0x6c45a0ea03e5719a4a8d5fb2c2a7ed4d59ea2267",
     "distributor": "0x9236b51387c167a3D2fE14BdA6bc7517FD0C74C5",
     "retailer": "0x1d22d371e231E6ccA714CF3a4163a655D5914C02",
     "pharmacy": "0x1Cd0d720301FB3e420eB65bC63740fbEED5f4C83"
