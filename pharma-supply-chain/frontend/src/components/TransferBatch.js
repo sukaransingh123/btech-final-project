@@ -55,26 +55,66 @@ const TransferBatch = ({ contract, account }) => {
           new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
         ]);
         if (response.success && response.batches) {
+          console.log('TransferBatch: MongoDB response batches:', response.batches);
+          console.log('TransferBatch: Account:', account);
+          console.log('TransferBatch: Total batches from API:', response.batches.length);
+          
+          // Match Dashboard logic: filter by owner and isParent (don't require tokenId initially)
           const userBatches = response.batches
-            .filter(b => b.currentOwner?.toLowerCase() === account?.toLowerCase() && !b.parentBatchId)
-            .map(b => ({
-              tokenId: b.tokenId,
-              batchID: b.batchID,
-              currentRole: b.currentRole === 'Manufacturer' ? 1 : b.currentRole === 'Distributor' ? 2 : b.currentRole === 'Retailer' ? 3 : 4,
-              metadataURI: b.metadataURI
-            }));
-          setUserBatches(userBatches);
-          setLoading(false);
-          return;
+            .filter(b => {
+              if (!b) return false;
+              const ownerMatch = b.currentOwner?.toLowerCase() === account?.toLowerCase();
+              const isParent = b.parentBatchId == null || b.parentBatchId === 0 || b.parentBatchId === '';
+              console.log(`TransferBatch: Batch ${b.batchID}: ownerMatch=${ownerMatch}, isParent=${isParent}, tokenId=${b.tokenId}, parentBatchId=${b.parentBatchId}`);
+              return ownerMatch && isParent;
+            })
+            .map(b => {
+              // Convert role string to number
+              let roleNum = 1; // Default to Manufacturer
+              if (b.currentRole === 'Manufacturer') roleNum = 1;
+              else if (b.currentRole === 'Distributor') roleNum = 2;
+              else if (b.currentRole === 'Retailer') roleNum = 3;
+              else if (b.currentRole === 'Pharmacy') roleNum = 4;
+              
+              return {
+                tokenId: b.tokenId, // tokenId might be null/undefined initially
+                batchID: b.batchID,
+                currentRole: roleNum,
+                metadataURI: b.metadataURI
+              };
+            })
+            .filter(b => b.batchID); // Only require batchID
+          
+          console.log('TransferBatch: Filtered batches (all):', userBatches);
+          
+          // Separate batches with and without tokenId
+          const batchesWithTokenId = userBatches.filter(b => b.tokenId != null && b.tokenId !== undefined && !isNaN(b.tokenId));
+          const batchesWithoutTokenId = userBatches.filter(b => !b.tokenId || isNaN(b.tokenId));
+          
+          console.log('TransferBatch: Batches with tokenId:', batchesWithTokenId.length);
+          console.log('TransferBatch: Batches without tokenId:', batchesWithoutTokenId.length);
+          
+          // Use batches with tokenId if available, otherwise fall through to blockchain
+          if (batchesWithTokenId.length > 0) {
+            console.log('TransferBatch: Using batches with tokenId from MongoDB');
+            setUserBatches(batchesWithTokenId);
+            setLoading(false);
+            return;
+          }
+          
+          // If no batches have tokenId, fall through to blockchain query
+          console.log('TransferBatch: No batches with tokenId in MongoDB, falling back to blockchain');
         }
       } catch (e) {
+        console.log('TransferBatch: MongoDB API failed, falling back to blockchain:', e.message);
         // Fallback to blockchain
       }
 
       // OPTIMIZED: Parallel blockchain queries
       const tokenCounter = Number(await contract.tokenCounter());
+      // tokenCounter is the next token ID to be minted, so existing tokens are 1 to tokenCounter-1
       // Scan all tokens (up to 200) to find all batches owned by user
-      const maxToScan = Math.min(tokenCounter - 1, 200);
+      const maxToScan = Math.min(tokenCounter, 200);
       
       if (maxToScan <= 0) {
         setUserBatches([]);
@@ -82,6 +122,7 @@ const TransferBatch = ({ contract, account }) => {
         return;
       }
 
+      // Token IDs start from 1 (tokenCounter=1 means no tokens yet, tokenCounter=2 means token 1 exists)
       const tokenIds = Array.from({ length: maxToScan }, (_, i) => i + 1);
       const batches = [];
       
@@ -99,12 +140,17 @@ const TransferBatch = ({ contract, account }) => {
             // Only include parent batches owned by current user
             if (owner && owner.toLowerCase() === account.toLowerCase() && 
                 Number(parent) === 0 && batchDetails) {
+              console.log(`TransferBatch: Blockchain - Found parent batch - Token ${tokenId}, BatchID: ${batchDetails.batchID}`);
               return {
                 tokenId,
                 batchID: batchDetails.batchID,
                 currentRole: Number(batchDetails.currentRole),
                 metadataURI: batchDetails.metadataURI
               };
+            } else {
+              if (owner && owner.toLowerCase() === account.toLowerCase()) {
+                console.log(`TransferBatch: Blockchain - Skipping batch - Token ${tokenId}, parent=${parent}, hasDetails=${!!batchDetails}`);
+              }
             }
           } catch {
             // Token doesn't exist or error
@@ -116,8 +162,18 @@ const TransferBatch = ({ contract, account }) => {
         batches.push(...results.filter(b => b !== null));
       }
       
-      // Sort by tokenId descending (newest first)
-      setUserBatches(batches.sort((a, b) => b.tokenId - a.tokenId));
+      // Sort by tokenId descending (newest first) and filter out invalid batches
+      const sortedBatches = batches
+        .filter(b => b && b.tokenId && b.batchID) // Ensure all required fields exist
+        .sort((a, b) => b.tokenId - a.tokenId);
+      console.log('TransferBatch: Loaded batches from blockchain:', sortedBatches);
+      console.log('TransferBatch: Blockchain batch count:', sortedBatches.length);
+      if (sortedBatches.length > 0) {
+        console.log('TransferBatch: Sample batch from blockchain:', sortedBatches[0]);
+      } else {
+        console.log('TransferBatch: No batches found on blockchain. Token counter:', tokenCounter);
+      }
+      setUserBatches(sortedBatches);
     } catch (error) {
       console.error('Error loading user batches:', error);
       setMessage('Error loading batches');
@@ -376,7 +432,11 @@ const TransferBatch = ({ contract, account }) => {
   };
 
   const getRoleName = (role) => {
-    switch (role) {
+    if (role == null || role === undefined || isNaN(Number(role))) {
+      return 'Unknown';
+    }
+    const roleNum = Number(role);
+    switch (roleNum) {
       case 1: return 'Manufacturer';
       case 2: return 'Distributor';
       case 3: return 'Retailer';
@@ -432,16 +492,55 @@ const TransferBatch = ({ contract, account }) => {
               <select
                 id="batchSelect"
                 value={selectedBatch || ''}
-                onChange={(e) => setSelectedBatch(Number(e.target.value))}
-                disabled={loading}
-                className="form-input"
+                onChange={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const value = e.target.value;
+                  console.log('TransferBatch dropdown changed:', value, 'Type:', typeof value);
+                  const numValue = value ? Number(value) : null;
+                  if (isNaN(numValue) && value) {
+                    console.error('Invalid tokenId value:', value);
+                    return;
+                  }
+                  console.log('Setting selectedBatch to:', numValue);
+                  setSelectedBatch(numValue);
+                  setMessage(''); // Clear any previous messages
+                }}
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                }}
+                disabled={loading || userBatches.length === 0}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem 1rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '0.5rem',
+                  fontSize: '1rem',
+                  backgroundColor: (loading || userBatches.length === 0) ? '#f3f4f6' : '#ffffff',
+                  cursor: (loading || userBatches.length === 0) ? 'not-allowed' : 'pointer',
+                  pointerEvents: (loading || userBatches.length === 0) ? 'none' : 'auto',
+                  zIndex: 10,
+                  position: 'relative'
+                }}
+                className="focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
               >
-                <option value="">Choose a batch...</option>
-                {userBatches.map((batch) => (
-                  <option key={batch.tokenId} value={batch.tokenId}>
-                    {batch.batchID} (Token #{batch.tokenId}) - Current: {getRoleName(batch.currentRole)}
-                  </option>
-                ))}
+                <option value="">{loading ? 'Loading batches...' : userBatches.length === 0 ? 'No batches available' : 'Choose a batch...'}</option>
+                {userBatches.map((batch) => {
+                  if (!batch || !batch.tokenId || isNaN(batch.tokenId)) {
+                    console.warn('Invalid batch in userBatches:', batch);
+                    return null;
+                  }
+                  const roleName = getRoleName(batch.currentRole);
+                  const displayText = `${batch.batchID || 'Unknown'} (Token #${batch.tokenId}) - Current: ${roleName}`;
+                  return (
+                    <option key={batch.tokenId} value={String(batch.tokenId)}>
+                      {displayText}
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
@@ -451,7 +550,7 @@ const TransferBatch = ({ contract, account }) => {
               </div>
             )}
 
-            {selectedBatch && (
+            {selectedBatch && !isNaN(selectedBatch) && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-2">
                   <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -489,13 +588,17 @@ const TransferBatch = ({ contract, account }) => {
                 id="recipientRole"
                 value={recipientRoleSelect}
                 onChange={(e) => setRecipientRoleSelect(e.target.value)}
-                disabled={loading || !selectedBatch}
+                disabled={loading || !selectedBatch || isNaN(selectedBatch)}
                 className="form-input"
               >
                 <option value="">Choose role...</option>
-                {selectedBatch && getNextRoles(userBatches.find(b => b.tokenId === selectedBatch)?.currentRole).map(r => (
-                  <option key={r} value={r}>{r}</option>
-                ))}
+                {selectedBatch && !isNaN(selectedBatch) && (() => {
+                  const batch = userBatches.find(b => b.tokenId === selectedBatch);
+                  const roles = batch ? getNextRoles(batch.currentRole) : [];
+                  return roles.map(r => (
+                    <option key={r} value={r}>{r}</option>
+                  ));
+                })()}
               </select>
             </div>
 
@@ -510,7 +613,7 @@ const TransferBatch = ({ contract, account }) => {
                 <p className="text-sm text-yellow-700 mb-3">You must scan this batch before transferring.</p>
                 <a 
                   className="inline-block bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors text-sm"
-                  href={`/verify/${selectedBatch}`} 
+                  href={selectedBatch && !isNaN(selectedBatch) ? `/verify/${selectedBatch}` : '#'} 
                   target="_blank" 
                   rel="noreferrer"
                 >
@@ -522,7 +625,7 @@ const TransferBatch = ({ contract, account }) => {
             <button 
               className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-bold py-4 px-6 rounded-xl transition-all duration-200 transform hover:scale-105 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
               onClick={handleTransfer}
-              disabled={!selectedBatch || !recipientRoleSelect || loading || (currentRoleNum !== 1 && !hasScanned) || isCounterfeit}
+              disabled={!selectedBatch || isNaN(selectedBatch) || !recipientRoleSelect || loading || (currentRoleNum !== 1 && !hasScanned) || isCounterfeit}
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">

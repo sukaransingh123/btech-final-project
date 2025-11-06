@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { ethers } from 'ethers';
-import QRScanner from './QRScanner';
+import WebQRScanner from './WebQRScanner';
 import apiService from '../utils/api';
 import { getParticipantName, getParticipantLocation } from '../utils/participants';
+import { CONTRACT_ADDRESS } from '../utils/contract';
 
 const VerifyBatch = ({ contract, readContract, account }) => {
   const { tokenId } = useParams();
@@ -19,7 +20,7 @@ const VerifyBatch = ({ contract, readContract, account }) => {
   const [productInfo, setProductInfo] = useState(null);
 
   useEffect(() => {
-    if (tokenId && contract) {
+    if (tokenId && (readContract || contract)) {
       loadBatchDetails();
     }
     try {
@@ -31,15 +32,21 @@ const VerifyBatch = ({ contract, readContract, account }) => {
         setTimeout(() => { verifyQRCode().catch(() => {}); }, 0);
       }
     } catch (_) {}
-  }, [tokenId, contract]);
+  }, [tokenId, readContract, contract]);
 
   const loadBatchDetails = async () => {
     try {
       setLoading(true);
-      const batchDetails = await contract.getBatchDetails(Number(tokenId));
-      const owner = await contract.ownerOf(Number(tokenId));
-      const role = await contract.getRole(owner);
-      const transferHistory = await contract.getTransferHistory(Number(tokenId));
+      // Use readContract (works without MetaMask)
+      const contractInstance = readContract || contract;
+      if (!contractInstance) {
+        setMessage('Blockchain connection required');
+        return;
+      }
+      const batchDetails = await contractInstance.getBatchDetails(Number(tokenId));
+      const owner = await contractInstance.ownerOf(Number(tokenId));
+      const role = await contractInstance.getRole(owner);
+      const transferHistory = await contractInstance.getTransferHistory(Number(tokenId));
       
       setVerificationData({
         batchDetails,
@@ -56,18 +63,36 @@ const VerifyBatch = ({ contract, readContract, account }) => {
   };
 
   const onScanDetected = async (text) => {
+    console.log('onScanDetected called with text:', text);
+    console.log('Text type:', typeof text);
+    console.log('Text length:', text?.length);
+    
     setShowScanner(false);
     try {
+      if (!text || text.trim() === '') {
+        console.error('Empty text received from scanner');
+        setMessage('Error: Empty QR code data received');
+        return;
+      }
+      
       setQrInput(text);
+      console.log('QR input set, waiting before verification...');
+      
       // Small delay to ensure scanner closes before verification
       setTimeout(async () => {
+        console.log('Starting verification...');
         await verifyQRCode();
-      }, 100);
-    } catch (_) {}
+      }, 200);
+    } catch (error) {
+      console.error('Error in onScanDetected:', error);
+      setMessage(`Error processing QR code: ${error.message}`);
+    }
   };
 
   const verifyQRCode = async () => {
-    if (!qrInput.trim()) {
+    console.log('verifyQRCode called, qrInput:', qrInput?.substring(0, 100));
+    
+    if (!qrInput || !qrInput.trim()) {
       setMessage('Please enter QR code data');
       return;
     }
@@ -77,58 +102,108 @@ const VerifyBatch = ({ contract, readContract, account }) => {
       setMessage('');
       setVerificationErrors([]);
 
-      const qrData = JSON.parse(qrInput);
+      console.log('Parsing QR input as JSON...');
+      let qrData;
+      try {
+        qrData = JSON.parse(qrInput);
+        console.log('QR data parsed successfully:', qrData);
+      } catch (parseError) {
+        console.error('Failed to parse QR input as JSON:', parseError);
+        console.error('QR input was:', qrInput);
+        throw new Error(`Invalid QR code format: ${parseError.message}. Please ensure you scanned the correct QR code.`);
+      }
       
-      if (!qrData.data || !qrData.signature || !qrData.signer) {
+      // For child QR codes, check if it's readable format (no signature required)
+      const isChildReadableFormat = qrData.type === 'pharma-product-info' || 
+                                    qrData.data?.type === 'child' ||
+                                    (qrData.readableInfo && !qrData.signature);
+      
+      // For parent QR codes, signature is required
+      if (!isChildReadableFormat && (!qrData.data || !qrData.signature || !qrData.signer)) {
         throw new Error('Invalid QR code format');
       }
 
       let verificationResult = null;
       let useBlockchainOnly = false;
 
-      try {
-        setMessage('Verifying product authenticity...');
-        verificationResult = await apiService.verifyProduct(
-          qrInput,
-          qrData.data.tokenId,
-          qrData.data.batchId
-        );
-        
-        // Extract errors from verification
-        if (verificationResult.verification?.errors) {
-          setVerificationErrors(verificationResult.verification.errors);
-        }
-      } catch (mongoError) {
-        console.log('MongoDB verification unavailable, using blockchain-only:', mongoError.message);
-        useBlockchainOnly = true;
-        setMessage('Verifying on blockchain...');
-        
-        // Use read-only contract for blockchain reads (no MetaMask popup)
-        const readContractInstance = readContract || contract;
-        let expectedContract;
-        try {
-          expectedContract = await readContractInstance.getAddress();
-        } catch (_) {
-          // Fallback: get contract address from contract instance
-          expectedContract = contract.target || contract.address;
-        }
-        const contractMatch = (qrData.data.contract || '').toLowerCase() === expectedContract.toLowerCase();
-
-        const messageHash = ethers.id(JSON.stringify(qrData.data));
-        const recoveredAddress = ethers.verifyMessage(ethers.getBytes(messageHash), qrData.signature);
-
-        const onChainBatch = await contract.getBatchDetails(qrData.data.tokenId);
-        const tokenMatch = Number(qrData.data.tokenId) === Number(onChainBatch.tokenId);
-        const onChainValid = onChainBatch.batchID === qrData.data.batchId;
-        const manufacturerMatch = recoveredAddress.toLowerCase() === onChainBatch.manufacturer.toLowerCase();
-
-        const overallValid = contractMatch && tokenMatch && manufacturerMatch && onChainValid;
-        
+      // Handle child QR codes (readable format - no blockchain needed)
+      if (isChildReadableFormat) {
+        console.log('Child QR code detected - using readable format');
+        const readableData = qrData.readableInfo || qrData.data || qrData;
         verificationResult = {
           success: true,
-          authentic: overallValid,
-          message: overallValid ? '✅ Product is AUTHENTIC' : '❌ Product verification FAILED'
+          authentic: true,
+          message: '✅ Product information verified',
+          isChildQR: true
         };
+        
+        // Extract product info directly from QR
+        if (readableData.product) {
+          setProductInfo({
+            drugName: readableData.product.drugName || 'Unknown',
+            batchID: readableData.product.batchID || 'N/A',
+            manufacturer: readableData.product.manufacturer?.name || 'Unknown',
+            expiryDate: readableData.product.expiryDate || 'N/A',
+            mfgDate: readableData.product.manufacturingDate || 'N/A',
+            manufacturerLocation: readableData.product.manufacturer?.location || null
+          });
+        }
+        
+        if (readableData.supplyChain) {
+          setVerificationData({
+            transferHistory: readableData.supplyChain
+          });
+        }
+      } else {
+        // Parent QR code - requires blockchain verification
+        try {
+          setMessage('Verifying product authenticity...');
+          verificationResult = await apiService.verifyProduct(
+            qrInput,
+            qrData.data.tokenId,
+            qrData.data.batchId
+          );
+          
+          // Extract errors from verification
+          if (verificationResult.verification?.errors) {
+            setVerificationErrors(verificationResult.verification.errors);
+          }
+        } catch (mongoError) {
+          console.log('MongoDB verification unavailable, using blockchain-only:', mongoError.message);
+          useBlockchainOnly = true;
+          setMessage('Verifying on blockchain...');
+          
+          // Use read-only contract (works without MetaMask)
+          const readContractInstance = readContract || contract;
+          if (!readContractInstance) {
+            throw new Error('Blockchain connection required for parent QR verification. Please connect MetaMask or try again.');
+          }
+          
+          let expectedContract;
+          try {
+            expectedContract = await readContractInstance.getAddress();
+          } catch (_) {
+            // Fallback: get contract address from contract instance
+            expectedContract = contract?.target || contract?.address || CONTRACT_ADDRESS;
+          }
+          const contractMatch = (qrData.data.contract || '').toLowerCase() === expectedContract.toLowerCase();
+
+          const messageHash = ethers.id(JSON.stringify(qrData.data));
+          const recoveredAddress = ethers.verifyMessage(ethers.getBytes(messageHash), qrData.signature);
+
+          const onChainBatch = await readContractInstance.getBatchDetails(qrData.data.tokenId);
+          const tokenMatch = Number(qrData.data.tokenId) === Number(onChainBatch.tokenId);
+          const onChainValid = onChainBatch.batchID === qrData.data.batchId;
+          const manufacturerMatch = recoveredAddress.toLowerCase() === onChainBatch.manufacturer.toLowerCase();
+
+          const overallValid = contractMatch && tokenMatch && manufacturerMatch && onChainValid;
+          
+          verificationResult = {
+            success: true,
+            authentic: overallValid,
+            message: overallValid ? '✅ Product is AUTHENTIC' : '❌ Product verification FAILED'
+          };
+        }
       }
 
       if (!verificationResult || !verificationResult.success) {
@@ -281,24 +356,29 @@ const VerifyBatch = ({ contract, readContract, account }) => {
           });
         } else {
           try {
-            const onChainBatch = await contract.getBatchDetails(qrData.data.tokenId);
-            const owner = await contract.ownerOf(qrData.data.tokenId);
-            const role = await contract.getRole(owner);
-            const transferHistory = await contract.getTransferHistory(qrData.data.tokenId);
-            
-            setVerificationData({
-              batchDetails: onChainBatch,
-              owner: owner,
-              role: Number(role),
-              transferHistory: transferHistory || []
-            });
+            // Use readContract (works without MetaMask)
+            const contractInstance = readContract || contract;
+            if (contractInstance && qrData.data?.tokenId) {
+              const onChainBatch = await contractInstance.getBatchDetails(qrData.data.tokenId);
+              const owner = await contractInstance.ownerOf(qrData.data.tokenId);
+              const role = await contractInstance.getRole(owner);
+              const transferHistory = await contractInstance.getTransferHistory(qrData.data.tokenId);
+              
+              setVerificationData({
+                batchDetails: onChainBatch,
+                owner: owner,
+                role: Number(role),
+                transferHistory: transferHistory || []
+              });
+            }
           } catch (bcError) {
             console.error('Error fetching blockchain data:', bcError);
+            // Non-critical - continue with QR data only
           }
         }
 
-        // Handle child QR scans (non-blocking)
-        if (contract && account && qrData.data.type === 'child') {
+        // Handle child QR scans (non-blocking) - only if MetaMask is connected
+        if (contract && account && qrData.data?.type === 'child') {
           try {
             const tx2 = await contract.recordChildScan(qrData.data.childId);
             await tx2.wait();
@@ -624,7 +704,7 @@ const VerifyBatch = ({ contract, readContract, account }) => {
         </div>
 
         {showScanner && (
-          <QRScanner onDetected={onScanDetected} onClose={() => setShowScanner(false)} />
+          <WebQRScanner onDetected={onScanDetected} onClose={() => setShowScanner(false)} />
         )}
       </div>
     </div>

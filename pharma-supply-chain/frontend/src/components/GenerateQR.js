@@ -20,10 +20,10 @@ const GenerateQR = ({ contract, account }) => {
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    if (contract) {
+    if (contract && account) {
       loadUserBatches();
     }
-  }, [contract]);
+  }, [contract, account]);
 
   const loadUserBatches = async () => {
     try {
@@ -37,25 +37,58 @@ const GenerateQR = ({ contract, account }) => {
           new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
         ]);
         if (response.success && response.batches) {
+          console.log('MongoDB response batches:', response.batches);
+          console.log('Account:', account);
+          console.log('Total batches from API:', response.batches.length);
+          
+          // Match Dashboard logic EXACTLY: filter by owner, then filter out child batches
+          // Dashboard doesn't require tokenId - it just filters by owner and !parentBatchId
           const userBatches = response.batches
-            .filter(b => b.currentOwner?.toLowerCase() === account?.toLowerCase() && !b.parentBatchId)
+            .filter(b => {
+              if (!b) return false;
+              
+              const ownerMatch = b.currentOwner?.toLowerCase() === account?.toLowerCase();
+              // Check if it's a parent batch (parentBatchId is null, undefined, or 0)
+              const isParent = b.parentBatchId == null || b.parentBatchId === 0 || b.parentBatchId === '';
+              
+              console.log(`Batch ${b.batchID || 'NO-ID'}: ownerMatch=${ownerMatch}, isParent=${isParent}, tokenId=${b.tokenId}, parentBatchId=${b.parentBatchId}, currentOwner=${b.currentOwner}`);
+              
+              return ownerMatch && isParent;
+            })
             .map(b => ({
-              tokenId: b.tokenId,
+              tokenId: b.tokenId, // tokenId might be null/undefined, but we'll handle that
               batchID: b.batchID,
               metadataURI: b.metadataURI
-            }));
-          setUserBatches(userBatches);
-          setLoading(false);
-          return;
+            }))
+            .filter(b => b.batchID); // Only require batchID, tokenId can be null initially
+          
+          console.log('Loaded batches from MongoDB for GenerateQR:', userBatches);
+          console.log('MongoDB batch count:', userBatches.length);
+          console.log('Filtered batches:', userBatches);
+          
+          // If we have batches but no tokenIds, we need to get them from blockchain
+          const batchesWithTokenId = userBatches.filter(b => b.tokenId);
+          const batchesWithoutTokenId = userBatches.filter(b => !b.tokenId);
+          
+          if (batchesWithTokenId.length > 0) {
+            setUserBatches(batchesWithTokenId);
+            setLoading(false);
+            return;
+          }
+          
+          // If no batches have tokenId, fall through to blockchain query
+          console.log('No batches with tokenId found, falling back to blockchain');
         }
       } catch (e) {
+        console.log('MongoDB API failed or no batches with tokenId, falling back to blockchain:', e.message);
         // Fallback to blockchain
       }
 
       // OPTIMIZED: Parallel blockchain queries
       const tokenCounter = Number(await contract.tokenCounter());
+      // tokenCounter is the next token ID to be minted, so existing tokens are 1 to tokenCounter-1
       // Scan all tokens (up to 200) to find all batches owned by manufacturer
-      const maxToScan = Math.min(tokenCounter - 1, 200);
+      const maxToScan = Math.min(tokenCounter, 200);
       
       if (maxToScan <= 0) {
         setUserBatches([]);
@@ -63,6 +96,7 @@ const GenerateQR = ({ contract, account }) => {
         return;
       }
 
+      // Token IDs start from 1 (tokenCounter=1 means no tokens yet, tokenCounter=2 means token 1 exists)
       const tokenIds = Array.from({ length: maxToScan }, (_, i) => i + 1);
       const batches = [];
       
@@ -80,11 +114,16 @@ const GenerateQR = ({ contract, account }) => {
             // Only include parent batches owned by current user
             if (owner && owner.toLowerCase() === account.toLowerCase() && 
                 Number(parent) === 0 && batchDetails) {
+              console.log(`Blockchain: Found parent batch - Token ${tokenId}, BatchID: ${batchDetails.batchID}`);
               return {
                 tokenId,
                 batchID: batchDetails.batchID,
                 metadataURI: batchDetails.metadataURI
               };
+            } else {
+              if (owner && owner.toLowerCase() === account.toLowerCase()) {
+                console.log(`Blockchain: Skipping batch - Token ${tokenId}, parent=${parent}, hasDetails=${!!batchDetails}`);
+              }
             }
           } catch {
             // Token doesn't exist or error
@@ -97,11 +136,18 @@ const GenerateQR = ({ contract, account }) => {
       }
       
       // Sort by tokenId descending (newest first) and set
-      setUserBatches(batches.sort((a, b) => b.tokenId - a.tokenId));
+      const sortedBatches = batches
+        .filter(b => b && b.tokenId && b.batchID) // Filter out invalid batches
+        .sort((a, b) => b.tokenId - a.tokenId);
+      console.log('Loaded batches for GenerateQR:', sortedBatches);
+      console.log('Batch count:', sortedBatches.length);
+      console.log('Sample batch:', sortedBatches[0]);
+      setUserBatches(sortedBatches);
+      setLoading(false);
     } catch (error) {
       console.error('Error loading user batches:', error);
       setMessage('Error loading batches');
-    } finally {
+      setUserBatches([]);
       setLoading(false);
     }
   };
@@ -484,16 +530,49 @@ const GenerateQR = ({ contract, account }) => {
               <select
                 id="batchSelect"
                 value={selectedBatch || ''}
-                onChange={(e) => setSelectedBatch(Number(e.target.value))}
-                disabled={loading}
-                className="form-input"
+                onChange={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const value = e.target.value;
+                  console.log('Dropdown changed:', value, 'Type:', typeof value);
+                  const numValue = value ? Number(value) : null;
+                  console.log('Setting selectedBatch to:', numValue);
+                  setSelectedBatch(numValue);
+                  setMessage(''); // Clear any previous messages
+                }}
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                }}
+                disabled={loading || userBatches.length === 0}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem 1rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '0.5rem',
+                  fontSize: '1rem',
+                  backgroundColor: (loading || userBatches.length === 0) ? '#f3f4f6' : '#ffffff',
+                  cursor: (loading || userBatches.length === 0) ? 'not-allowed' : 'pointer',
+                  pointerEvents: (loading || userBatches.length === 0) ? 'none' : 'auto',
+                  zIndex: 10,
+                  position: 'relative'
+                }}
+                className="focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none"
               >
-                <option value="">Choose a batch...</option>
-                {userBatches.map((batch) => (
-                  <option key={batch.tokenId} value={batch.tokenId}>
-                    {batch.batchID} (Token #{batch.tokenId})
-                  </option>
-                ))}
+                <option value="">{loading ? 'Loading batches...' : userBatches.length === 0 ? 'No batches available' : 'Choose a batch...'}</option>
+                {userBatches.map((batch) => {
+                  if (!batch || !batch.tokenId) {
+                    console.warn('Invalid batch in userBatches:', batch);
+                    return null;
+                  }
+                  return (
+                    <option key={batch.tokenId} value={String(batch.tokenId)}>
+                      {batch.batchID || 'Unknown'} (Token #{batch.tokenId})
+                    </option>
+                  );
+                })}
               </select>
             </div>
 

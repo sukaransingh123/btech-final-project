@@ -353,7 +353,7 @@ const CreateBatch = ({ contract, account }) => {
         qaCertificate: null
       });
 
-      // Navigate to dashboard after a short delay
+      // Navigate to dashboard after a short delay to allow blockchain to update
       setTimeout(() => {
         navigate('/');
       }, 2000);

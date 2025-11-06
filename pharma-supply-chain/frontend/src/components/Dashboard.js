@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
 const Dashboard = ({ contract, readContract, account, userRole }) => {
   const [stats, setStats] = useState({
@@ -9,12 +9,17 @@ const Dashboard = ({ contract, readContract, account, userRole }) => {
   });
   const [recentBatches, setRecentBatches] = useState([]);
   const [loading, setLoading] = useState(true);
+  const location = useLocation();
 
   useEffect(() => {
     if (contract) {
-      loadDashboardData();
+      // Add small delay to allow blockchain to update after batch creation
+      const timer = setTimeout(() => {
+        loadDashboardData();
+      }, 1000);
+      return () => clearTimeout(timer);
     }
-  }, [contract, readContract, account]);
+  }, [contract, readContract, account, location.pathname]);
 
   const loadDashboardData = async () => {
     try {
@@ -49,7 +54,8 @@ const Dashboard = ({ contract, readContract, account, userRole }) => {
       // OPTIMIZED: Parallel blockchain queries
       const tokenCounter = Number(await c.tokenCounter());
       // Scan all tokens (up to 200 for safety) to find all batches
-      const maxToScan = Math.min(tokenCounter - 1, 200);
+      // Include the latest token (tokenCounter - 1) to catch newly created batches
+      const maxToScan = Math.min(tokenCounter, 200);
       
       if (maxToScan <= 0) {
         setStats({ totalBatches: 0, myBatches: 0, pendingTransfers: 0 });
@@ -129,6 +135,11 @@ const Dashboard = ({ contract, readContract, account, userRole }) => {
     }
   };
 
+  // Expose refresh function for manual refresh
+  const handleRefresh = () => {
+    loadDashboardData();
+  };
+
   const getRoleName = (role) => {
     const roles = {
       'Manufacturer': 'Manufacturer',
@@ -163,7 +174,25 @@ const Dashboard = ({ contract, readContract, account, userRole }) => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       <div className="max-w-7xl mx-auto px-4 py-8">
-        <h1 className="text-4xl font-bold text-gray-900 mb-8">Dashboard</h1>
+        <div className="flex items-center justify-between mb-8">
+          <h1 className="text-4xl font-bold text-gray-900">Dashboard</h1>
+          <button
+            onClick={handleRefresh}
+            disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-semibold rounded-lg transition-colors"
+            title="Refresh dashboard data"
+          >
+            <svg 
+              className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} 
+              fill="none" 
+              stroke="currentColor" 
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <span>{loading ? 'Refreshing...' : 'Refresh'}</span>
+          </button>
+        </div>
         
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
