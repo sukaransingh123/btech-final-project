@@ -170,11 +170,11 @@ function App() {
             <Route path="/consumer" element={<ConsumerDashboard contract={contract} account={account} userRole={userRole} />} />
             <Route path="/create-batch" element={<CreateBatch contract={contract} account={account} />} />
             <Route path="/transfer-batch" element={<TransferBatch contract={contract} account={account} />} />
-            <Route path="/verify-batch" element={<VerifyBatch contract={contract} account={account} />} />
+            <Route path="/verify-batch" element={<VerifyBatch contract={contract} readContract={readContract} account={account} />} />
             <Route path="/generate-qr" element={<GenerateQR contract={contract} account={account} />} />
             <Route path="/link-batch" element={<LinkBatch contract={contract} account={account} />} />
             <Route path="/register-manufacturer" element={<RegisterManufacturer contract={contract} account={account} />} />
-            <Route path="/verify/:tokenId" element={<VerifyBatch contract={contract} account={account} />} />
+            <Route path="/verify/:tokenId" element={<VerifyBatch contract={contract} readContract={readContract} account={account} />} />
             <Route path="*" element={<Navigate to={roleHome()} />} />
           </Routes>
         </div>

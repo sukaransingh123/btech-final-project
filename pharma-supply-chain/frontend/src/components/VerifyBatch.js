@@ -3,8 +3,9 @@ import { useParams } from 'react-router-dom';
 import { ethers } from 'ethers';
 import QRScanner from './QRScanner';
 import apiService from '../utils/api';
+import { getParticipantName, getParticipantLocation } from '../utils/participants';
 
-const VerifyBatch = ({ contract, account }) => {
+const VerifyBatch = ({ contract, readContract, account }) => {
   const { tokenId } = useParams();
   const [verificationData, setVerificationData] = useState(null);
   const [qrInput, setQrInput] = useState('');
@@ -55,11 +56,14 @@ const VerifyBatch = ({ contract, account }) => {
   };
 
   const onScanDetected = async (text) => {
+    setShowScanner(false);
     try {
       setQrInput(text);
-      await verifyQRCode();
+      // Small delay to ensure scanner closes before verification
+      setTimeout(async () => {
+        await verifyQRCode();
+      }, 100);
     } catch (_) {}
-    setShowScanner(false);
   };
 
   const verifyQRCode = async () => {
@@ -101,7 +105,13 @@ const VerifyBatch = ({ contract, account }) => {
         
         // Use read-only contract for blockchain reads (no MetaMask popup)
         const readContractInstance = readContract || contract;
-        const expectedContract = await readContractInstance.getAddress();
+        let expectedContract;
+        try {
+          expectedContract = await readContractInstance.getAddress();
+        } catch (_) {
+          // Fallback: get contract address from contract instance
+          expectedContract = contract.target || contract.address;
+        }
         const contractMatch = (qrData.data.contract || '').toLowerCase() === expectedContract.toLowerCase();
 
         const messageHash = ethers.id(JSON.stringify(qrData.data));
@@ -125,18 +135,136 @@ const VerifyBatch = ({ contract, account }) => {
         throw new Error(verificationResult?.error || 'Verification failed');
       }
 
-      setIsValid(verificationResult.authentic);
+      // Extract product info from QR data if available (for child QR codes)
+      if (qrData.data.type === 'child') {
+        setProductInfo({
+          drugName: qrData.data.drugName || 'Unknown',
+          batchID: qrData.data.batchId || qrData.data.batchID || 'N/A',
+          manufacturer: qrData.data.manufacturerName || qrData.data.manufacturer || 'Unknown',
+          expiryDate: qrData.data.expiryDate || 'N/A',
+          mfgDate: qrData.data.mfgDate || 'N/A',
+          manufacturerLocation: qrData.data.manufacturerLocation || null
+        });
+        
+        // If transfer history is in QR data, use it
+        if (qrData.data.transferHistory && qrData.data.transferHistory.length > 0) {
+          setVerificationData(prev => ({
+            ...prev,
+            transferHistory: qrData.data.transferHistory
+          }));
+        }
+      }
       
-      if (verificationResult.authentic) {
+      // CRITICAL: Check scan status BEFORE setting isValid
+      // This ensures repeated scans are detected and marked counterfeit
+      let scanCheckPassed = true;
+      let scanError = null;
+      
+      if (contract && account && qrData.data.type === 'parent') {
+        try {
+          // First check if batch is already marked counterfeit
+          try {
+            const isCounterfeitOnChain = await contract.isCounterfeit(qrData.data.tokenId);
+            if (isCounterfeitOnChain) {
+              scanCheckPassed = false;
+              scanError = { type: 'counterfeit', message: 'Batch already flagged as counterfeit' };
+            }
+          } catch (_) {}
+          
+          const userRole = await contract.getRole(account);
+          const r = Number(userRole);
+          
+          // Get batch current role for verification
+          let batchCurrentRole = null;
+          try {
+            const batchDetails = await contract.getBatchDetails(qrData.data.tokenId);
+            batchCurrentRole = Number(batchDetails.currentRole);
+          } catch (_) {}
+          
+          // Only check scan for Distributor (2) and Retailer (3)
+          if ((r === 2 || r === 3) && scanCheckPassed) {
+            // Check if user role matches batch current role
+            if (batchCurrentRole && r !== batchCurrentRole) {
+              scanCheckPassed = false;
+              scanError = { type: 'wrong_role', message: `Scan by wrong role. Expected role ${batchCurrentRole}, got ${r}` };
+            } else {
+              // Check if already scanned BEFORE attempting to record
+              try {
+                const alreadyScanned = await contract.scannedByRole(qrData.data.tokenId, r);
+                if (alreadyScanned) {
+                  scanCheckPassed = false;
+                  scanError = { type: 'repeated_scan', message: 'Repeated scan detected for this role' };
+                } else {
+                  // Try to record the scan - this will fail if already scanned
+                  try {
+                    const tx = await contract.recordScan(qrData.data.tokenId);
+                    await tx.wait();
+                    // Scan recorded successfully - check if it was marked counterfeit
+                    try {
+                      const isCounterfeitOnChain = await contract.isCounterfeit(qrData.data.tokenId);
+                      if (isCounterfeitOnChain) {
+                        scanCheckPassed = false;
+                        scanError = { type: 'repeated_scan', message: 'Repeated scan detected - batch marked as counterfeit' };
+                      }
+                    } catch (cfErr) {
+                      // Non-critical - continue
+                    }
+                  } catch (recordErr) {
+                    const errorMsg = recordErr.message || recordErr.reason || recordErr.shortMessage || '';
+                    if (errorMsg.includes('wrong role') || errorMsg.includes('Wrong role')) {
+                      scanCheckPassed = false;
+                      scanError = { type: 'wrong_role', message: 'Scan by wrong role' };
+                    } else if (errorMsg.includes('Already scanned') || errorMsg.includes('already scanned')) {
+                      scanCheckPassed = false;
+                      scanError = { type: 'repeated_scan', message: 'Repeated scan detected for this role' };
+                    } else {
+                      // Other error - might be network issue, but continue
+                      console.error('Error recording scan:', recordErr);
+                    }
+                  }
+                }
+              } catch (checkErr) {
+                console.error('Error checking scan status:', checkErr);
+                // Continue verification but log the error
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Error in scan verification:', err);
+        }
+      }
+      
+      // Set validation result based on both signature verification AND scan check
+      const isAuthentic = verificationResult.authentic && scanCheckPassed;
+      setIsValid(isAuthentic);
+      
+      // Handle scan errors FIRST - this takes priority
+      if (!scanCheckPassed && scanError) {
+        setCounterfeit(true);
+        setCounterfeitReason(scanError.message);
+        setIsValid(false);
+        if (scanError.type === 'repeated_scan') {
+          setMessage('❌ Counterfeit detected: Batch already scanned by this role. Repeated scans are not allowed.');
+        } else if (scanError.type === 'wrong_role') {
+          setMessage('❌ Counterfeit detected: Wrong role scanned this batch');
+        } else if (scanError.type === 'counterfeit') {
+          setMessage('❌ Counterfeit detected: Batch has been flagged as counterfeit');
+        }
+        return; // Stop here - don't show success message
+      }
+      
+      // Only show success if BOTH signature AND scan check passed
+      if (verificationResult.authentic && scanCheckPassed) {
         setMessage('Product authenticated successfully');
         
         if (verificationResult.batch && !useBlockchainOnly) {
-          setProductInfo({
-            drugName: verificationResult.batch.drugName || 'Unknown',
-            batchID: verificationResult.batch.batchID,
-            manufacturer: verificationResult.batch.manufacturerName || verificationResult.batch.manufacturer,
-            expiryDate: verificationResult.batch.expiryDate ? new Date(verificationResult.batch.expiryDate).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }).toUpperCase() : 'N/A'
-          });
+          setProductInfo(prev => ({
+            ...prev,
+            drugName: verificationResult.batch.drugName || prev?.drugName || 'Unknown',
+            batchID: verificationResult.batch.batchID || prev?.batchID,
+            manufacturer: verificationResult.batch.manufacturerName || verificationResult.batch.manufacturer || prev?.manufacturer,
+            expiryDate: verificationResult.batch.expiryDate ? new Date(verificationResult.batch.expiryDate).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }).toUpperCase() : prev?.expiryDate || 'N/A'
+          }));
           
           setVerificationData({
             batchDetails: {
@@ -169,24 +297,15 @@ const VerifyBatch = ({ contract, account }) => {
           }
         }
 
-        if (contract) {
+        // Handle child QR scans (non-blocking)
+        if (contract && account && qrData.data.type === 'child') {
           try {
-            const role = await contract.getRole(account);
-            const r = Number(role);
-            if (qrData.data.type === 'parent' && (r === 2 || r === 3)) {
-              try {
-                const tx = await contract.recordScan(qrData.data.tokenId);
-                await tx.wait();
-              } catch (e) {
-                setCounterfeitReason('Repeated scan detected for this role');
-              }
-            } else if (qrData.data.type === 'child') {
-              try {
-                const tx2 = await contract.recordChildScan(qrData.data.childId);
-                await tx2.wait();
-              } catch (_) {}
-            }
-          } catch (_) {}
+            const tx2 = await contract.recordChildScan(qrData.data.childId);
+            await tx2.wait();
+            setMessage('✅ Child scan recorded successfully');
+          } catch (_) {
+            // Non-critical for child scans
+          }
         }
 
         if (verificationResult.batch?.isCounterfeit || 
@@ -308,9 +427,27 @@ const VerifyBatch = ({ contract, account }) => {
                   <div className="flex items-center justify-between py-2 border-b border-gray-200">
                     <span className="text-gray-600 font-medium">Manufacturer:</span>
                     <span className="font-semibold text-gray-900">
-                      {productInfo?.manufacturer || verificationData?.batchDetails?.manufacturer?.slice(0, 6) + '...' || 'Unknown Source'}
+                      {productInfo?.manufacturer || getParticipantName(verificationData?.batchDetails?.manufacturer) || 'Unknown Source'}
                     </span>
                   </div>
+                  
+                  {productInfo?.manufacturerLocation && (
+                    <div className="flex items-center justify-between py-2 border-b border-gray-200">
+                      <span className="text-gray-600 font-medium">Manufacturer Location:</span>
+                      <span className="font-semibold text-gray-900 text-sm">
+                        {productInfo.manufacturerLocation}
+                      </span>
+                    </div>
+                  )}
+                  
+                  {productInfo?.mfgDate && (
+                    <div className="flex items-center justify-between py-2 border-b border-gray-200">
+                      <span className="text-gray-600 font-medium">Manufacturing Date:</span>
+                      <span className="font-semibold text-gray-900">
+                        {productInfo.mfgDate}
+                      </span>
+                    </div>
+                  )}
                   
                   <div className="flex items-center justify-between py-2">
                     <span className="text-gray-600 font-medium">Expiry:</span>
@@ -345,39 +482,66 @@ const VerifyBatch = ({ contract, account }) => {
             {/* Provenance History for Authentic */}
             {isValid && !counterfeit && verificationData?.transferHistory && verificationData.transferHistory.length > 0 && (
               <div className="p-6 bg-gray-50 border-t border-gray-200">
-                <h3 className="text-lg font-bold text-gray-800 mb-4">Provenance History</h3>
+                <h3 className="text-lg font-bold text-gray-800 mb-4">Supply Chain History</h3>
                 <div className="space-y-4">
-                  {verificationData.transferHistory.map((record, index) => (
-                    <div key={index} className="flex items-start gap-3 pl-4 border-l-2 border-blue-400">
-                      <div className={`mt-1 p-2 rounded-full ${
-                        index === 0 ? 'bg-blue-100' : 'bg-gray-200'
-                      }`}>
-                        {index === 0 ? (
-                          <svg className="w-4 h-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                          </svg>
-                        ) : (
-                          <svg className="w-4 h-4 text-gray-600" fill="currentColor" viewBox="0 0 20 20">
-                            <path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
-                            <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" />
-                          </svg>
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <p className="font-semibold text-gray-900">
-                          {getRoleName(Number(record.fromRole))} → {getRoleName(Number(record.toRole))}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-1">
-                          {new Date(Number(record.timestamp) * 1000).toLocaleString()}
-                        </p>
-                        {index === 0 && (
-                          <p className="text-xs text-blue-600 mt-1 font-medium">
-                            {verificationData.batchDetails?.manufacturer?.slice(0, 10)}... Production Facility
+                  {verificationData.transferHistory.map((record, index) => {
+                    const fromName = record.fromName || getParticipantName(record.from);
+                    const toName = record.toName || getParticipantName(record.to);
+                    const fromLocation = record.fromLocation || getParticipantLocation(record.from);
+                    const toLocation = record.toLocation || getParticipantLocation(record.to);
+                    return (
+                      <div key={index} className="flex items-start gap-3 pl-4 border-l-2 border-blue-400">
+                        <div className={`mt-1 p-2 rounded-full ${
+                          index === 0 ? 'bg-blue-100' : 'bg-gray-200'
+                        }`}>
+                          {index === 0 ? (
+                            <svg className="w-4 h-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                            </svg>
+                          ) : (
+                            <svg className="w-4 h-4 text-gray-600" fill="currentColor" viewBox="0 0 20 20">
+                              <path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
+                              <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" />
+                            </svg>
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-semibold text-gray-900">
+                            {getRoleName(Number(record.fromRole))} → {getRoleName(Number(record.toRole))}
                           </p>
-                        )}
+                          <p className="text-sm text-gray-700 mt-1">
+                            <span className="font-medium">{fromName}</span>
+                            {fromLocation && <span className="text-gray-500"> • {fromLocation}</span>}
+                          </p>
+                          <p className="text-sm text-gray-700 mt-1">
+                            <span className="font-medium">→ {toName}</span>
+                            {toLocation && <span className="text-gray-500"> • {toLocation}</span>}
+                          </p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {new Date(Number(record.timestamp) * 1000).toLocaleString()}
+                          </p>
+                        </div>
                       </div>
+                    );
+                  })}
+                  {/* Show manufacturer info at the start */}
+                  <div className="flex items-start gap-3 pl-4 border-l-2 border-green-400 bg-green-50 p-3 rounded-lg">
+                    <div className="mt-1 p-2 rounded-full bg-green-100">
+                      <svg className="w-4 h-4 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                      </svg>
                     </div>
-                  ))}
+                    <div className="flex-1">
+                      <p className="font-semibold text-gray-900">Manufactured By</p>
+                      <p className="text-sm text-gray-700 mt-1">
+                        <span className="font-medium">{getParticipantName(verificationData.batchDetails?.manufacturer)}</span>
+                        <span className="text-gray-500"> • {getParticipantLocation(verificationData.batchDetails?.manufacturer)}</span>
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {new Date(Number(verificationData.batchDetails?.timestamp || 0) * 1000).toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -435,7 +599,16 @@ const VerifyBatch = ({ contract, account }) => {
               
               <button 
                 type="button"
-                onClick={() => setShowScanner(true)}
+                onClick={() => {
+                  // Check if camera is supported before opening scanner
+                  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    if (!navigator.getUserMedia) {
+                      setMessage('Camera access not available in MetaMask browser. Please use Paste mode to enter QR code data manually.');
+                      return;
+                    }
+                  }
+                  setShowScanner(true);
+                }}
                 className="flex-1 bg-gray-600 hover:bg-gray-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -443,6 +616,9 @@ const VerifyBatch = ({ contract, account }) => {
                 </svg>
                 <span>Scan QR Code</span>
               </button>
+              <div className="mt-2 text-xs text-gray-500 text-center">
+                Note: MetaMask browser may not support camera. Use Paste mode if scanning doesn't work.
+              </div>
             </div>
           </div>
         </div>

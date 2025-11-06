@@ -2,6 +2,14 @@ import React, { useState, useEffect } from 'react';
 import QRCode from 'qrcode.react';
 import { ethers } from 'ethers';
 import ipfs from '../utils/ipfs';
+import { CONTRACT_ADDRESS, ROLE_NAMES } from '../utils/contract';
+import { getParticipantInfo } from '../utils/participants';
+import apiService from '../utils/api';
+import { getBaseUrl } from '../utils/networkUtils';
+
+const getRoleName = (role) => {
+  return ROLE_NAMES[role] || 'Unknown';
+};
 
 const GenerateQR = ({ contract, account }) => {
   const [userBatches, setUserBatches] = useState([]);
@@ -100,11 +108,38 @@ const GenerateQR = ({ contract, account }) => {
 
   const downloadChildQR = (index) => {
     const canvas = document.getElementById(`qr-code-child-${index}`);
-    if (canvas) {
+    if (canvas && canvas.toDataURL) {
       const link = document.createElement('a');
       link.download = `child-qr-${index}.png`;
-      link.href = canvas.toDataURL();
+      link.href = canvas.toDataURL('image/png');
       link.click();
+    } else {
+      // Fallback for SVG
+      try {
+        const svgElement = document.querySelector(`#qr-code-child-${index} svg`);
+        if (svgElement) {
+          const svgData = new XMLSerializer().serializeToString(svgElement);
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          const img = new Image();
+          const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+          const url = URL.createObjectURL(svgBlob);
+          
+          img.onload = () => {
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0);
+            const link = document.createElement('a');
+            link.download = `child-qr-${index}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+            URL.revokeObjectURL(url);
+          };
+          img.src = url;
+        }
+      } catch (err) {
+        console.error('Error downloading child QR:', err);
+      }
     }
   };
 
@@ -121,17 +156,20 @@ const GenerateQR = ({ contract, account }) => {
       // Get batch details
       const batchDetails = await contract.getBatchDetails(selectedBatch);
       
-      // Resolve base URL for mobile scanning (prefer HTTPS via env)
-      const baseUrl = (process.env.REACT_APP_PUBLIC_BASE_URL && process.env.REACT_APP_PUBLIC_BASE_URL.startsWith('http'))
-        ? process.env.REACT_APP_PUBLIC_BASE_URL
-        : window.location.origin;
+      // Resolve base URL for mobile scanning (uses network IP in development)
+      const baseUrl = await getBaseUrl();
 
       // Create Parent QR payload
       const payload = {
         type: 'parent',
         batchId: batchDetails.batchID,
         tokenId: selectedBatch,
-        contract: contractAddress,
+        contract: CONTRACT_ADDRESS,
+        network: {
+          chainId: 80002, // Polygon Amoy
+          chainName: 'Polygon Amoy',
+          rpcUrl: 'https://rpc-amoy.polygon.technology'
+        },
         verifyUrl: `${baseUrl}/verify/${selectedBatch}`,
         timestamp: Date.now()
       };
@@ -178,6 +216,20 @@ const GenerateQR = ({ contract, account }) => {
       const scanUrl = `${baseUrl}/verify?data=${encoded}`;
       setQrData({ ...qrPayload, ipfsUrl: ipfsRef, scanUrl });
 
+      // Store QR data with signature in MongoDB for verification
+      try {
+        await apiService.storeQRData(
+          selectedBatch, // tokenId
+          batchDetails.batchID, // batchID
+          qrPayload, // Full QR payload: { data: payload, signature: signature, signer: account }
+          signature // Signature string (also included in qrPayload.signature, but passed separately for API)
+        );
+        console.log('✅ QR data with signature stored in MongoDB successfully');
+      } catch (mongoError) {
+        console.warn('⚠️ Failed to store QR data in MongoDB (non-critical):', mongoError);
+        // Non-critical: QR code still works, just not stored in MongoDB
+      }
+
       // Build Child QRs for all linked child tokens
       const children = await contract.getChildBatches(selectedBatch);
       // Try to enrich payload with metadata JSON (optional)
@@ -191,16 +243,49 @@ const GenerateQR = ({ contract, account }) => {
       
       // OPTIMIZED: Generate child QR payloads in parallel (but sign sequentially to avoid nonce issues)
       const childList = [];
+      
+      // Get transfer history for child QR with participant information
+      let transferHistory = [];
+      try {
+        const history = await contract.getTransferHistory(selectedBatch);
+        transferHistory = history.map(h => {
+          const fromInfo = getParticipantInfo(h.from);
+          const toInfo = getParticipantInfo(h.to);
+          return {
+            from: h.from,
+            to: h.to,
+            fromRole: Number(h.fromRole),
+            toRole: Number(h.toRole),
+            timestamp: Number(h.timestamp),
+            fromName: fromInfo?.name || h.from?.slice(0, 6) + '...',
+            toName: toInfo?.name || h.to?.slice(0, 6) + '...',
+            fromLocation: fromInfo?.location ? `${fromInfo.location.city}, ${fromInfo.location.state}` : null,
+            toLocation: toInfo?.location ? `${toInfo.location.city}, ${toInfo.location.state}` : null
+          };
+        });
+      } catch (_) {}
+      
+      // Get manufacturer info
+      const manufacturerInfo = getParticipantInfo(batchDetails.manufacturer);
+      
       const childPayloads = children.map((cid) => {
         const cPayload = {
           type: 'child',
           parentId: selectedBatch,
           childId: Number(cid),
-          contract: contractAddr,
+          contract: CONTRACT_ADDRESS,
+          network: {
+            chainId: 80002, // Polygon Amoy
+            chainName: 'Polygon Amoy',
+            rpcUrl: 'https://rpc-amoy.polygon.technology'
+          },
           verifyUrl: `${baseUrl}/verify/${Number(cid)}`,
           timestamp: Date.now(),
           manufacturer: batchDetails.manufacturer,
-          parentTimestamp: Number(batchDetails.timestamp)
+          manufacturerName: manufacturerInfo?.name || 'Unknown Manufacturer',
+          manufacturerLocation: manufacturerInfo?.location ? `${manufacturerInfo.location.city}, ${manufacturerInfo.location.state}` : null,
+          parentTimestamp: Number(batchDetails.timestamp),
+          transferHistory: transferHistory
         };
         // Enrich with metadata fields for child QR
         if (metaJson) {
@@ -211,23 +296,76 @@ const GenerateQR = ({ contract, account }) => {
         return cPayload;
       });
 
-      // Sign child payloads sequentially (to avoid nonce conflicts) but batch the rest
+      // Generate child QR codes as readable JSON (no website redirect, no MetaMask required)
       for (const cPayload of childPayloads) {
         try {
-          const cHash = ethers.id(JSON.stringify(cPayload));
-          const cSig = await signer.signMessage(ethers.getBytes(cHash));
-          const childQR = { data: cPayload, signature: cSig, signer: account };
+          // Create human-readable product information for child QR
+          const productInfo = {
+            type: 'pharma-product-info',
+            version: '1.0',
+            product: {
+              drugName: cPayload.drugName || 'Unknown',
+              batchID: batchDetails.batchID,
+              manufacturingDate: cPayload.mfgDate || 'N/A',
+              expiryDate: cPayload.expiryDate || 'N/A',
+              manufacturer: {
+                name: cPayload.manufacturerName || 'Unknown Manufacturer',
+                location: cPayload.manufacturerLocation || 'Unknown Location',
+                address: cPayload.manufacturer
+              }
+            },
+            supplyChain: {
+              origin: {
+                role: 'Manufacturer',
+                name: cPayload.manufacturerName || 'Unknown',
+                location: cPayload.manufacturerLocation || null,
+                timestamp: new Date(Number(cPayload.parentTimestamp) * 1000).toLocaleString('en-IN', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric'
+                })
+              },
+              journey: (cPayload.transferHistory || []).map((transfer, idx) => ({
+                step: idx + 1,
+                from: {
+                  role: getRoleName(transfer.fromRole),
+                  name: transfer.fromName || 'Unknown',
+                  location: transfer.fromLocation || null
+                },
+                to: {
+                  role: getRoleName(transfer.toRole),
+                  name: transfer.toName || 'Unknown',
+                  location: transfer.toLocation || null
+                },
+                timestamp: new Date(Number(transfer.timestamp) * 1000).toLocaleString('en-IN', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })
+              }))
+            },
+            verification: {
+              contract: CONTRACT_ADDRESS,
+              network: 'Polygon Amoy',
+              tokenId: cPayload.childId,
+              parentTokenId: cPayload.parentId
+            },
+            scannedAt: new Date().toISOString()
+          };
+
+          // Create a readable JSON string for QR code (formatted for display)
+          const readableJson = JSON.stringify(productInfo, null, 2);
           
-          // Try IPFS upload (non-blocking)
-          const ipfsPromise = ipfs.uploadMetadata(childQR).catch(() => null);
-          const cEncoded = btoa(unescape(encodeURIComponent(JSON.stringify(childQR))));
-          const cScanUrl = `${baseUrl}/verify?data=${cEncoded}`;
+          // For QR code, use compact JSON (no spaces) to reduce size but keep readable
+          const compactJson = JSON.stringify(productInfo);
           
-          const ipfsResult = await ipfsPromise;
           childList.push({ 
-            ...childQR, 
-            ipfsUrl: ipfsResult?.url || null, 
-            scanUrl: cScanUrl 
+            data: cPayload, // Keep original data for verification if needed
+            readableInfo: productInfo,
+            scanUrl: compactJson, // QR code content - compact JSON that can be displayed
+            displayFormat: 'json' // Indicates this is display-only, not a URL
           });
         } catch (err) {
           console.error('Error generating child QR:', err);
@@ -236,6 +374,10 @@ const GenerateQR = ({ contract, account }) => {
       }
       
       setChildQRs(childList);
+      
+      // Note: Child QR codes don't need to be stored in MongoDB as they're display-only JSON
+      // They don't require signature verification like parent QR codes
+      
       setMessage('QR code generated successfully!');
 
     } catch (error) {
@@ -249,12 +391,51 @@ const GenerateQR = ({ contract, account }) => {
   const downloadQR = () => {
     if (!qrData) return;
 
+    // Try to get canvas element (when renderAs="canvas")
     const canvas = document.getElementById('qr-code');
-    if (canvas) {
+    if (canvas && canvas.toDataURL) {
       const link = document.createElement('a');
       link.download = `pharma-batch-${qrData.data.batchId}.png`;
-      link.href = canvas.toDataURL();
+      link.href = canvas.toDataURL('image/png');
       link.click();
+    } else {
+      // Fallback: Create canvas from SVG or use QR code data directly
+      try {
+        const svgElement = document.querySelector('#qr-code svg');
+        if (svgElement) {
+          const svgData = new XMLSerializer().serializeToString(svgElement);
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          const img = new Image();
+          const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+          const url = URL.createObjectURL(svgBlob);
+          
+          img.onload = () => {
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0);
+            const link = document.createElement('a');
+            link.download = `pharma-batch-${qrData.data.batchId}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+            URL.revokeObjectURL(url);
+          };
+          img.src = url;
+        } else {
+          // Last resort: download as text/JSON
+          const dataStr = JSON.stringify(qrData, null, 2);
+          const dataBlob = new Blob([dataStr], { type: 'application/json' });
+          const url = URL.createObjectURL(dataBlob);
+          const link = document.createElement('a');
+          link.download = `pharma-batch-${qrData.data.batchId}.json`;
+          link.href = url;
+          link.click();
+          URL.revokeObjectURL(url);
+        }
+      } catch (err) {
+        console.error('Error downloading QR:', err);
+        setMessage('Error downloading QR code. Please take a screenshot instead.');
+      }
     }
   };
 
@@ -347,15 +528,47 @@ const GenerateQR = ({ contract, account }) => {
                 <h2 className="text-2xl font-bold text-gray-900 mb-6">Generated QR Code</h2>
                 
                 <div className="flex justify-center mb-6">
-                  <div className="bg-white p-4 rounded-xl shadow-lg">
+                  <div className="bg-white p-6 rounded-xl shadow-lg">
                     <QRCode
                       id="qr-code"
                       value={qrData.scanUrl || JSON.stringify(qrData)}
-                      size={256}
+                      size={400}
                       level="H"
                       includeMargin={true}
+                      renderAs="canvas"
+                      bgColor="#FFFFFF"
+                      fgColor="#000000"
+                      imageSettings={{
+                        src: '',
+                        height: 0,
+                        width: 0,
+                        excavate: false,
+                      }}
                     />
                   </div>
+                </div>
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                  <p className="text-xs text-blue-800 mb-2">
+                    <strong>📱 Mobile Scanning:</strong> This QR code must be scanned through our website for verification.
+                  </p>
+                  {window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? (
+                    <div className="mt-2 p-2 bg-yellow-50 border border-yellow-300 rounded text-xs">
+                      <p className="font-semibold text-yellow-900 mb-1">Testing from Phone:</p>
+                      <ol className="list-decimal list-inside space-y-1 text-yellow-800">
+                        <li>Make sure your phone is on the same WiFi network as your computer</li>
+                        <li>Open the QR code on your computer</li>
+                        <li>Scan it with your phone's camera (will open in browser)</li>
+                        <li>The QR code URL should show your computer's IP address (not localhost)</li>
+                      </ol>
+                      <p className="mt-2 text-yellow-900 font-semibold">
+                        QR URL: {qrData.scanUrl?.split('?')[0] || 'Generating...'}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-blue-700">
+                      Scan this QR code with your phone's camera to open the verification page.
+                    </p>
+                  )}
                 </div>
 
                 <div className="bg-white rounded-lg p-6 mb-6">
@@ -373,12 +586,34 @@ const GenerateQR = ({ contract, account }) => {
                       <span className="text-gray-600 font-medium">Contract:</span>
                       <span className="font-mono text-xs text-blue-600">{qrData.data.contract?.slice(0, 10)}...</span>
                     </div>
+                    <div className="flex justify-between py-2 border-b border-gray-200">
+                      <span className="text-gray-600 font-medium">Signature:</span>
+                      <span className="font-mono text-xs text-green-600 flex items-center gap-1">
+                        {qrData.signature ? (
+                          <>
+                            <svg className="w-4 h-4 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                            </svg>
+                            Present
+                          </>
+                        ) : (
+                          <span className="text-red-600">Missing</span>
+                        )}
+                      </span>
+                    </div>
+                    <div className="flex justify-between py-2 border-b border-gray-200">
+                      <span className="text-gray-600 font-medium">Signer:</span>
+                      <span className="font-mono text-xs text-gray-900">{qrData.signer?.slice(0, 10)}...{qrData.signer?.slice(-8)}</span>
+                    </div>
                     {qrData.scanUrl && (
                       <div className="py-2">
                         <span className="text-gray-600 font-medium block mb-1">Scan URL:</span>
                         <a href={qrData.scanUrl} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline text-xs break-all">
                           {qrData.scanUrl}
                         </a>
+                        <p className="text-xs text-gray-500 mt-1">
+                          QR code contains signed payload with signature for verification
+                        </p>
                       </div>
                     )}
                   </div>
@@ -409,24 +644,36 @@ const GenerateQR = ({ contract, account }) => {
 
             {childQRs.length > 0 && (
               <div className="mt-8 bg-white rounded-2xl p-6 shadow-xl">
-                <h2 className="text-2xl font-bold text-gray-900 mb-6">Child QR Codes ({childQRs.length})</h2>
+                <div className="mb-6">
+                  <h2 className="text-2xl font-bold text-gray-900 mb-2">Child QR Codes ({childQRs.length})</h2>
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                    <p className="text-sm text-blue-800">
+                      <strong>📱 Mobile-Friendly:</strong> Child QR codes contain product information in JSON format. 
+                      When scanned on a phone, the information will be displayed directly without requiring MetaMask or website access.
+                    </p>
+                  </div>
+                </div>
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                   {childQRs.map((cqr, idx) => (
                     <div key={idx} className="bg-gray-50 rounded-xl p-4 border border-gray-200 hover:shadow-lg transition-shadow">
                       <div className="flex justify-center mb-3">
-                        <div className="bg-white p-2 rounded-lg">
+                        <div className="bg-white p-3 rounded-lg">
                           <QRCode
                             id={`qr-code-child-${idx}`}
-                            value={cqr.scanUrl || JSON.stringify(cqr)}
-                            size={150}
+                            value={cqr.scanUrl || JSON.stringify(cqr.readableInfo || cqr)}
+                            size={200}
                             level="H"
                             includeMargin={true}
+                            renderAs="canvas"
+                            bgColor="#FFFFFF"
+                            fgColor="#000000"
                           />
                         </div>
                       </div>
                       <div className="text-xs space-y-1 mb-3">
-                        <div><strong>Child ID:</strong> {cqr.data.childId}</div>
-                        <div><strong>Parent:</strong> {cqr.data.parentId}</div>
+                        <div><strong>Child ID:</strong> {cqr.data?.childId || cqr.readableInfo?.verification?.tokenId}</div>
+                        <div><strong>Parent:</strong> {cqr.data?.parentId || cqr.readableInfo?.verification?.parentTokenId}</div>
+                        <div className="text-green-600 font-semibold mt-2">📱 Scannable on Phone (No MetaMask)</div>
                       </div>
                       <button 
                         className="w-full bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold py-2 px-3 rounded-lg transition-colors"

@@ -17,7 +17,10 @@ const LinkBatch = ({ contract, account }) => {
     try {
       setLoading(true);
       
-      for (let i = 1; i < Number(tokenCounter); i++) {
+      const tokenCounter = Number(await contract.tokenCounter());
+      const batches = [];
+      
+      for (let i = 1; i < tokenCounter; i++) {
         try {
           const owner = await contract.ownerOf(i);
           if (owner.toLowerCase() === account.toLowerCase()) {

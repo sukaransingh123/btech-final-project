@@ -234,39 +234,101 @@ const TransferBatch = ({ contract, account }) => {
         if (bErr?.message?.includes('Insufficient MATIC')) throw bErr;
       }
 
-      // Execute bulk transfer with retry strategy (legacy gasPrice)
+      // Execute bulk transfer with retry strategy and rate limit handling
       const provider = contract.runner?.provider;
-      const sendWithRetry = async (fn, args) => {
-        try {
-          const tx = await fn(...args);
-          const txHash = tx.hash; // Capture hash before waiting
-          await tx.wait();
-          return txHash; // Return the hash
-        } catch (sendErr) {
-          if (!provider) throw sendErr;
+      const sendWithRetry = async (fn, args, maxRetries = 3) => {
+        let retryCount = 0;
+        
+        while (retryCount < maxRetries) {
           try {
-            let legacyOverrides;
-            try {
-              const gp = await provider.send('eth_gasPrice', []);
-              legacyOverrides = { gasPrice: gp ? ethers.toBigInt(gp) : undefined };
-            } catch (gpErr) {
-              // If rate limited (-32005), fallback to a conservative static gas price
-              const msg = (gpErr?.message || '').toLowerCase();
-              if (msg.includes('rate limited') || msg.includes('-32005')) {
-                legacyOverrides = { gasPrice: ethers.parseUnits('30', 'gwei') };
-              } else {
-                // Unknown failure fetching gas price: try without overrides
-                legacyOverrides = undefined;
-              }
+            // Add delay for retries (exponential backoff)
+            if (retryCount > 0) {
+              const delayMs = Math.min(1000 * Math.pow(2, retryCount - 1), 5000); // Max 5 seconds
+              setMessage(`Rate limited. Retrying in ${delayMs / 1000} seconds... (Attempt ${retryCount + 1}/${maxRetries})`);
+              await new Promise(resolve => setTimeout(resolve, delayMs));
             }
-            const tx2 = legacyOverrides ? await fn(...[...args, legacyOverrides]) : await fn(...args);
-            const txHash2 = tx2.hash; // Capture hash before waiting
-            await tx2.wait();
-            return txHash2; // Return the hash
-          } catch (sendErr2) {
-            throw sendErr2;
+            
+            const tx = await fn(...args);
+            const txHash = tx.hash; // Capture hash before waiting
+            setMessage('Transaction sent! Waiting for confirmation...');
+            await tx.wait();
+            return txHash; // Return the hash
+          } catch (sendErr) {
+            const errorMsg = (sendErr?.message || sendErr?.reason || '').toLowerCase();
+            const errorCode = sendErr?.code || sendErr?.error?.code;
+            
+            // Check for rate limiting
+            const isRateLimited = errorMsg.includes('rate limit') || 
+                                 errorMsg.includes('rate limited') ||
+                                 errorCode === -32603 ||
+                                 (errorCode && errorCode.toString().includes('32603'));
+            
+            if (!provider) {
+              if (isRateLimited && retryCount < maxRetries - 1) {
+                retryCount++;
+                continue;
+              }
+              throw sendErr;
+            }
+            
+            // Try with legacy gas price on error
+            if (retryCount < maxRetries - 1) {
+              try {
+                retryCount++;
+                setMessage(`Retrying with legacy gas price... (Attempt ${retryCount + 1}/${maxRetries})`);
+                
+                // Wait before retry
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                let legacyOverrides;
+                try {
+                  const gp = await provider.send('eth_gasPrice', []);
+                  legacyOverrides = { gasPrice: gp ? ethers.toBigInt(gp) : undefined };
+                } catch (gpErr) {
+                  // If rate limited, fallback to a conservative static gas price
+                  const msg = (gpErr?.message || gpErr?.error?.message || '').toLowerCase();
+                  const gpCode = gpErr?.error?.code || gpErr?.code;
+                  if (msg.includes('rate limited') || msg.includes('rate limit') || gpCode === -32603) {
+                    legacyOverrides = { gasPrice: ethers.parseUnits('30', 'gwei') };
+                  } else {
+                    // Unknown failure fetching gas price: try without overrides
+                    legacyOverrides = undefined;
+                  }
+                }
+                
+                const tx2 = legacyOverrides ? await fn(...[...args, legacyOverrides]) : await fn(...args);
+                const txHash2 = tx2.hash; // Capture hash before waiting
+                setMessage('Transaction sent! Waiting for confirmation...');
+                await tx2.wait();
+                return txHash2; // Return the hash
+              } catch (sendErr2) {
+                const err2Msg = (sendErr2?.message || sendErr2?.reason || '').toLowerCase();
+                const err2Code = sendErr2?.code || sendErr2?.error?.code;
+                const isErr2RateLimited = err2Msg.includes('rate limit') || err2Code === -32603;
+                
+                if (isErr2RateLimited && retryCount < maxRetries - 1) {
+                  continue; // Retry again
+                }
+                
+                if (retryCount >= maxRetries - 1) {
+                  if (isErr2RateLimited || isRateLimited) {
+                    throw new Error(`Transaction failed after ${maxRetries} attempts due to rate limiting. Please wait 1-2 minutes and try again.`);
+                  }
+                  throw new Error(`Transaction failed after ${maxRetries} attempts: ${sendErr2.message || sendErr2.reason || 'Unknown error'}`);
+                }
+                throw sendErr2;
+              }
+            } else {
+              // Final attempt failed
+              if (isRateLimited) {
+                throw new Error(`RPC provider is rate limiting requests. Please wait 1-2 minutes and try again.`);
+              }
+              throw sendErr;
+            }
           }
         }
+        
+        throw new Error('Failed to send transaction after all retries');
       };
 
       let txHash;

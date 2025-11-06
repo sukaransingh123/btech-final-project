@@ -219,23 +219,86 @@ const CreateBatch = ({ contract, account }) => {
         // Otherwise continue; let the node estimate/send the tx
       }
 
-      // Mint the parent NFT with retry strategy
+      // Mint the parent NFT with retry strategy and rate limit handling
       let tx;
-      try {
-        const overrides = {};
-        if (estGas) overrides.gasLimit = estGas + (estGas / 5n);
-        tx = await contract.mintBatch(tokenURI, formData.batchID, overrides);
-        await tx.wait();
-      } catch (sendErr) {
-        // Retry with legacy gas price if provider hiccups (-32603)
+      const maxRetries = 3;
+      let retryCount = 0;
+      
+      while (retryCount < maxRetries) {
         try {
-          const gp = await provider.send('eth_gasPrice', []);
-          const legacyOverrides = { gasPrice: gp ? ethers.toBigInt(gp) : undefined };
-          tx = await contract.mintBatch(tokenURI, formData.batchID, metadataHash, legacyOverrides);
+          const overrides = {};
+          if (estGas) overrides.gasLimit = estGas + (estGas / 5n);
+          
+          // Add delay for retries (exponential backoff)
+          if (retryCount > 0) {
+            const delayMs = Math.min(1000 * Math.pow(2, retryCount - 1), 5000); // Max 5 seconds
+            setMessage(`Rate limited. Retrying in ${delayMs / 1000} seconds... (Attempt ${retryCount + 1}/${maxRetries})`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+          }
+          
+          tx = await contract.mintBatch(tokenURI, formData.batchID, metadataHash, overrides);
+          setMessage('Transaction sent! Waiting for confirmation...');
           await tx.wait();
-        } catch (sendErr2) {
-          throw sendErr2;
+          break; // Success, exit retry loop
+        } catch (sendErr) {
+          const errorMsg = (sendErr?.message || sendErr?.reason || '').toLowerCase();
+          const errorCode = sendErr?.code || sendErr?.error?.code;
+          
+          // Check for rate limiting
+          const isRateLimited = errorMsg.includes('rate limit') || 
+                               errorMsg.includes('rate limited') ||
+                               errorCode === -32603 ||
+                               (errorCode && errorCode.toString().includes('32603'));
+          
+          if (isRateLimited && retryCount < maxRetries - 1) {
+            retryCount++;
+            continue; // Retry with backoff
+          }
+          
+          // Try with legacy gas price if provider hiccups (-32603 or other provider errors)
+          if (retryCount < maxRetries - 1) {
+            try {
+              retryCount++;
+              setMessage(`Retrying with legacy gas price... (Attempt ${retryCount + 1}/${maxRetries})`);
+              
+              // Wait before retry
+              await new Promise(resolve => setTimeout(resolve, 2000));
+              
+              let legacyOverrides;
+              try {
+                const gp = await provider.send('eth_gasPrice', []);
+                legacyOverrides = { gasPrice: gp ? ethers.toBigInt(gp) : undefined };
+              } catch (gpErr) {
+                // If rate limited getting gas price, use static fallback
+                if (gpErr?.error?.code === -32603 || (gpErr?.message || '').toLowerCase().includes('rate limit')) {
+                  legacyOverrides = { gasPrice: ethers.parseUnits('30', 'gwei') };
+                } else {
+                  legacyOverrides = undefined;
+                }
+              }
+              
+              tx = await contract.mintBatch(tokenURI, formData.batchID, metadataHash, legacyOverrides || {});
+              setMessage('Transaction sent! Waiting for confirmation...');
+              await tx.wait();
+              break; // Success
+            } catch (sendErr2) {
+              if (retryCount >= maxRetries - 1) {
+                throw new Error(`Transaction failed after ${maxRetries} attempts. Rate limiting may be active. Please wait a few minutes and try again. Error: ${sendErr2.message || sendErr2.reason || 'Unknown error'}`);
+              }
+              continue;
+            }
+          } else {
+            // Final attempt failed
+            if (isRateLimited) {
+              throw new Error(`RPC provider is rate limiting requests. Please wait 1-2 minutes and try again. The network may be experiencing high traffic.`);
+            }
+            throw sendErr;
+          }
         }
+      }
+      
+      if (!tx) {
+        throw new Error('Failed to send transaction after all retries');
       }
 
       // Determine newly minted parent tokenId (tokenCounter incremented post-mint)
