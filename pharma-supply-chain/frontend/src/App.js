@@ -13,6 +13,9 @@ import VerifyBatch from './components/VerifyBatch';
 import GenerateQR from './components/GenerateQR';
 import LinkBatch from './components/LinkBatch';
 import RegisterManufacturer from './components/RegisterManufacturer';
+import QRGenerator from './components/QRGenerator';
+import GenerateIPFSJson from './components/GenerateIPFSJson';
+import IpfsViewPage from './pages/IpfsViewPage';
 import './App.css';
 import { CONTRACT_ABI, CONTRACT_ADDRESS } from './utils/contract';
 
@@ -224,6 +227,9 @@ function App() {
             {/* Verify routes - ALWAYS accessible, no MetaMask required */}
             <Route path="/verify-batch" element={<VerifyBatch contract={contract} readContract={readContract} account={account} />} />
             <Route path="/verify/:tokenId" element={<VerifyBatch contract={contract} readContract={readContract} account={account} />} />
+            <Route path="/ipfs" element={<IpfsViewPage />} />
+            <Route path="/ipfs-qr" element={<QRGenerator />} />
+            <Route path="/generate-ipfs-json" element={<GenerateIPFSJson contract={contract} account={account} />} />
             
             {/* Protected routes - require MetaMask */}
             {account ? (

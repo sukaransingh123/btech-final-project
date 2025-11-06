@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { ethers } from 'ethers';
 import WebQRScanner from './WebQRScanner';
 import apiService from '../utils/api';
@@ -8,6 +8,7 @@ import { CONTRACT_ADDRESS } from '../utils/contract';
 
 const VerifyBatch = ({ contract, readContract, account }) => {
   const { tokenId } = useParams();
+  const navigate = useNavigate();
   const [verificationData, setVerificationData] = useState(null);
   const [qrInput, setQrInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -18,6 +19,7 @@ const VerifyBatch = ({ contract, readContract, account }) => {
   const [counterfeitReason, setCounterfeitReason] = useState('');
   const [verificationErrors, setVerificationErrors] = useState([]);
   const [productInfo, setProductInfo] = useState(null);
+  const [ipfsCid, setIpfsCid] = useState('');
 
   useEffect(() => {
     if (tokenId && (readContract || contract)) {
@@ -538,6 +540,37 @@ const VerifyBatch = ({ contract, readContract, account }) => {
                 </div>
               </div>
             )}
+
+            {/* IPFS View Section */}
+            <div className="p-6 bg-blue-50 border-t border-blue-200">
+              <h3 className="text-lg font-bold text-blue-800 mb-4">View IPFS Data</h3>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <input
+                  type="text"
+                  value={ipfsCid}
+                  onChange={(e) => setIpfsCid(e.target.value)}
+                  placeholder="Paste JSON CID here (e.g., QmXxxx...)"
+                  className="flex-1 px-4 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <button
+                  onClick={() => {
+                    if (ipfsCid.trim()) {
+                      navigate(`/ipfs?cid=${encodeURIComponent(ipfsCid.trim())}`);
+                    }
+                  }}
+                  disabled={!ipfsCid.trim()}
+                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-semibold rounded-lg transition-colors inline-flex items-center gap-2"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                  Open IPFS View
+                </button>
+              </div>
+              <p className="text-sm text-blue-700 mt-2">
+                Paste the CID of your JSON file uploaded to IPFS Desktop to view batch details.
+              </p>
+            </div>
 
             {/* Security Alert for Counterfeit */}
             {(!isValid || counterfeit) && verificationErrors.length > 0 && (
