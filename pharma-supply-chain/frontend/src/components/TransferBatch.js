@@ -8,6 +8,7 @@ const TransferBatch = ({ contract, account }) => {
   const [selectedBatch, setSelectedBatch] = useState(null);
   // Address will be derived from selected role
   const [recipientRoleSelect, setRecipientRoleSelect] = useState('');
+  const [pharmacyAddress, setPharmacyAddress] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [currentRoleNum, setCurrentRoleNum] = useState(null);
@@ -126,6 +127,9 @@ const TransferBatch = ({ contract, account }) => {
       const tokenIds = Array.from({ length: maxToScan }, (_, i) => i + 1);
       const batches = [];
       
+      // DEMO MODE: Ignore batches minted before this timestamp (Aug 25, 2026, 18:46 IST)
+      const DEMO_START_TIMESTAMP = 1787663700;
+      
       // Process in parallel batches of 10
       const batchSize = 10;
       for (let i = 0; i < tokenIds.length; i += batchSize) {
@@ -140,13 +144,18 @@ const TransferBatch = ({ contract, account }) => {
             // Only include parent batches owned by current user
             if (owner && owner.toLowerCase() === account.toLowerCase() && 
                 Number(parent) === 0 && batchDetails) {
-              console.log(`TransferBatch: Blockchain - Found parent batch - Token ${tokenId}, BatchID: ${batchDetails.batchID}`);
-              return {
-                tokenId,
-                batchID: batchDetails.batchID,
-                currentRole: Number(batchDetails.currentRole),
-                metadataURI: batchDetails.metadataURI
-              };
+              
+              const batchTimestamp = Number(batchDetails.timestamp);
+              // Hide old batches for the demo
+              if (batchTimestamp >= DEMO_START_TIMESTAMP) {
+                console.log(`TransferBatch: Blockchain - Found parent batch - Token ${tokenId}, BatchID: ${batchDetails.batchID}`);
+                return {
+                  tokenId,
+                  batchID: batchDetails.batchID,
+                  currentRole: Number(batchDetails.currentRole),
+                  metadataURI: batchDetails.metadataURI
+                };
+              }
             } else {
               if (owner && owner.toLowerCase() === account.toLowerCase()) {
                 console.log(`TransferBatch: Blockchain - Skipping batch - Token ${tokenId}, parent=${parent}, hasDetails=${!!batchDetails}`);
@@ -174,9 +183,23 @@ const TransferBatch = ({ contract, account }) => {
         console.log('TransferBatch: No batches found on blockchain. Token counter:', tokenCounter);
       }
       setUserBatches(sortedBatches);
+      
+      // Auto-select batch from URL query param if present
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const batchIdParam = params.get('batchId');
+        if (batchIdParam) {
+          const numId = Number(batchIdParam);
+          if (!isNaN(numId) && sortedBatches.some(b => b.tokenId === numId)) {
+            setSelectedBatch(numId);
+          }
+        }
+      } catch (e) {
+        // Ignore URL parsing errors
+      }
     } catch (error) {
       console.error('Error loading user batches:', error);
-      setMessage('Error loading batches');
+      setMessage('Error loading batches: ' + (error.message || error.toString()));
     } finally {
       setLoading(false);
     }
@@ -208,10 +231,12 @@ const TransferBatch = ({ contract, account }) => {
         ? PARTICIPANTS.DISTRIBUTOR
         : recipientRoleSelect === 'Retailer'
           ? PARTICIPANTS.RETAILER
+          : recipientRoleSelect === 'Pharmacy'
+            ? pharmacyAddress.trim()
           : recipientRoleSelect === 'Manufacturer'
             ? PARTICIPANTS.MANUFACTURER
             : '';
-      if (!recipientAddress) throw new Error('Unknown recipient role');
+      if (!recipientAddress || !ethers.isAddress(recipientAddress)) throw new Error('Enter a valid recipient wallet address');
 
       // Verify sender owns the selected parent
       const owner = await contract.ownerOf(selectedBatch);
@@ -252,12 +277,8 @@ const TransferBatch = ({ contract, account }) => {
         throw new Error('Invalid transfer sequence. Check role requirements.');
       }
 
-      // Block if counterfeit or not scanned (UI guard; contract also enforces)
+      // Block if counterfeit (UI guard; contract also enforces)
       if (isCounterfeit) throw new Error('This batch is flagged counterfeit. Transfer is blocked.');
-      // Manufacturer does not need to scan; others must
-      if (currentRoleNum === 1 ? false : !hasScanned) {
-        throw new Error('Scan required before transfer. Open Verify and scan the QR first.');
-      }
 
       // Preflight: static call to surface revert reasons before prompting MetaMask
       try {
@@ -468,11 +489,11 @@ const TransferBatch = ({ contract, account }) => {
           </div>
           
           {message && (
-            <div className={`mb-6 p-4 rounded-lg ${
-              message.includes('Error') || message.includes('❌')
-                ? 'bg-red-50 text-red-700 border border-red-200'
-                : 'bg-green-50 text-green-700 border border-green-200'
-            }`}>
+            <div className={`mb-6 p-4 rounded-lg shadow-sm border ${
+              message.includes('Error') || message.includes('❌') || message.toLowerCase().includes('revert') || message.toLowerCase().includes('failed')
+                ? 'bg-red-50 text-red-800 border-red-300'
+                : 'bg-green-50 text-green-800 border-green-300'
+            } break-words overflow-hidden whitespace-pre-wrap`}>
               {message}
             </div>
           )}
@@ -504,6 +525,7 @@ const TransferBatch = ({ contract, account }) => {
                   }
                   console.log('Setting selectedBatch to:', numValue);
                   setSelectedBatch(numValue);
+                  setRecipientRoleSelect(''); // Fixed: reset role when batch changes
                   setMessage(''); // Clear any previous messages
                 }}
                 onMouseDown={(e) => {
@@ -561,8 +583,8 @@ const TransferBatch = ({ contract, account }) => {
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-gray-600">Scan Status:</span>
-                    <span className={hasScanned ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
-                      {hasScanned ? '✅ Scanned' : '❌ Not Scanned'}
+                    <span className="text-gray-500 font-medium">
+                      ⓘ Optional for Demo
                     </span>
                   </div>
                   <div className="flex justify-between">
@@ -571,11 +593,6 @@ const TransferBatch = ({ contract, account }) => {
                       {isCounterfeit ? '⚠️ Flagged' : '✅ Clear'}
                     </span>
                   </div>
-                  {currentRoleNum === 1 && (
-                    <div className="text-xs text-blue-700 mt-2">
-                      ⓘ Manufacturers can transfer without scanning
-                    </div>
-                  )}
                 </div>
               </div>
             )}
@@ -602,30 +619,26 @@ const TransferBatch = ({ contract, account }) => {
               </select>
             </div>
 
-            {currentRoleNum !== 1 && !hasScanned && !isCounterfeit && (
-              <div className="bg-yellow-50 border border-yellow-300 rounded-lg p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <svg className="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                  <span className="font-semibold text-yellow-900">Scan Required</span>
-                </div>
-                <p className="text-sm text-yellow-700 mb-3">You must scan this batch before transferring.</p>
-                <a 
-                  className="inline-block bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors text-sm"
-                  href={selectedBatch && !isNaN(selectedBatch) ? `/verify/${selectedBatch}` : '#'} 
-                  target="_blank" 
-                  rel="noreferrer"
-                >
-                  Open Verify to Scan
-                </a>
+            {/* Fixed: Pharmacy address input now in the form section, not inside the header */}
+            {recipientRoleSelect === 'Pharmacy' && (
+              <div>
+                <label htmlFor="pharmacyAddress" className="block text-sm font-semibold text-gray-700 mb-2">Pharmacy Wallet Address</label>
+                <input
+                  id="pharmacyAddress"
+                  value={pharmacyAddress}
+                  onChange={(e) => setPharmacyAddress(e.target.value)}
+                  placeholder="0x..."
+                  className="form-input"
+                  disabled={loading}
+                />
+                <p className="text-xs text-gray-500 mt-1">Enter the Pharmacy wallet address (must have Pharmacy role assigned on-chain).</p>
               </div>
             )}
 
             <button 
               className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-bold py-4 px-6 rounded-xl transition-all duration-200 transform hover:scale-105 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
               onClick={handleTransfer}
-              disabled={!selectedBatch || isNaN(selectedBatch) || !recipientRoleSelect || loading || (currentRoleNum !== 1 && !hasScanned) || isCounterfeit}
+              disabled={!selectedBatch || isNaN(selectedBatch) || !recipientRoleSelect || loading || isCounterfeit}
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">

@@ -172,11 +172,11 @@ const CreateBatch = ({ contract, account }) => {
       // Estimate gas and check balance (prefer populateTransaction, fallback to manual encoding)
       const signer = await provider.getSigner();
       const addr = await signer.getAddress();
-      // Minimal balance check (0.05 MATIC)
+      // Minimal balance check (0.001 POL)
       try {
         const bal = await provider.getBalance(addr);
-        if (bal < ethers.parseEther('0.02')) {
-          setMessage('Insufficient MATIC on Polygon Amoy (need ~0.02+). Please top-up from faucet and retry.');
+        if (bal < ethers.parseEther('0.001')) {
+          setMessage('Insufficient POL on Polygon Amoy. Please top-up from faucet and retry.');
           setLoading(false);
           return;
         }
@@ -321,26 +321,10 @@ const CreateBatch = ({ contract, account }) => {
         }
       }
 
-      // Mint child batches equal to quantity (if > 0)
-      // Note: Child batches inherit parent's metadataHash from contract
-      const qty = parseInt(formData.quantity || '0', 10);
-      if (qty > 0) {
-        setMessage('Creating child batches...');
-        try {
-          const txChild = await contract.mintChildBatches(parentId, qty, tokenURI);
-          await txChild.wait();
-        } catch (childErr) {
-          try {
-            const gp2 = await provider.send('eth_gasPrice', []);
-            const legacyOverrides2 = { gasPrice: gp2 ? ethers.toBigInt(gp2) : undefined };
-            const txChild2 = await contract.mintChildBatches(parentId, qty, tokenURI, legacyOverrides2);
-            await txChild2.wait();
-          } catch (childErr2) {
-            throw childErr2;
-          }
-        }
-      }
-
+      // DEMO OPTIMIZATION: We no longer mint separate child NFTs on the blockchain
+      // to save gas. The quantity is saved in the off-chain database and IPFS metadata 
+      // for record-keeping, but only 1 parent NFT is minted.
+      
       setMessage('✅ Batch created successfully! NFT minted on blockchain. MongoDB will sync automatically via event listener.');
       
       // Reset form
@@ -380,11 +364,11 @@ const CreateBatch = ({ contract, account }) => {
           </div>
           
           {message && (
-            <div className={`mb-6 p-4 rounded-lg ${
-              message.includes('Error') || message.includes('❌')
-                ? 'bg-red-50 text-red-700 border border-red-200'
-                : 'bg-green-50 text-green-700 border border-green-200'
-            }`}>
+            <div className={`mb-6 p-4 rounded-lg shadow-sm border ${
+              message.includes('Error') || message.includes('❌') || message.toLowerCase().includes('revert') || message.toLowerCase().includes('failed')
+                ? 'bg-red-50 text-red-800 border-red-300'
+                : 'bg-green-50 text-green-800 border-green-300'
+            } break-words overflow-hidden whitespace-pre-wrap`}>
               {message}
             </div>
           )}

@@ -10,14 +10,24 @@ describe("PharmaNFT", function () {
   let pharmacy;
   let otherAccount;
 
+  // Reusable mint helper — keeps tests DRY
+  const MOCK_URI  = "https://ipfs.io/ipfs/QmExampleMetadata";
+  const MOCK_HASH = "0xabc123def456abc123def456abc123def456abc123def456abc123def456abcd";
+
+  async function mintBatch(signer, batchID) {
+    return pharmaNFT.connect(signer).mintBatch(MOCK_URI, batchID, MOCK_HASH);
+  }
+
   beforeEach(async function () {
-    [owner, manufacturer, distributor, retailer, pharmacy, otherAccount] = await ethers.getSigners();
-    
+    [owner, manufacturer, distributor, retailer, pharmacy, otherAccount] =
+      await ethers.getSigners();
+
     const PharmaNFT = await ethers.getContractFactory("PharmaNFT");
     pharmaNFT = await PharmaNFT.deploy();
     await pharmaNFT.waitForDeployment();
   });
 
+  // ─────────────────────────────────────────────────────────────
   describe("Deployment", function () {
     it("Should set the right owner", async function () {
       expect(await pharmaNFT.owner()).to.equal(owner.address);
@@ -28,17 +38,18 @@ describe("PharmaNFT", function () {
     });
   });
 
+  // ─────────────────────────────────────────────────────────────
   describe("Role Management", function () {
     it("Should allow owner to register manufacturer", async function () {
       await pharmaNFT.registerManufacturer(manufacturer.address);
       expect(await pharmaNFT.isManufacturer(manufacturer.address)).to.be.true;
-      expect(await pharmaNFT.getRole(manufacturer.address)).to.equal(1); // Manufacturer role
+      expect(await pharmaNFT.getRole(manufacturer.address)).to.equal(1);
     });
 
     it("Should allow owner to set roles", async function () {
-      await pharmaNFT.setRole(distributor.address, 2); // Distributor
-      await pharmaNFT.setRole(retailer.address, 3); // Retailer
-      await pharmaNFT.setRole(pharmacy.address, 4); // Pharmacy
+      await pharmaNFT.setRole(distributor.address, 2);
+      await pharmaNFT.setRole(retailer.address, 3);
+      await pharmaNFT.setRole(pharmacy.address, 4);
 
       expect(await pharmaNFT.getRole(distributor.address)).to.equal(2);
       expect(await pharmaNFT.getRole(retailer.address)).to.equal(3);
@@ -52,45 +63,45 @@ describe("PharmaNFT", function () {
     });
   });
 
+  // ─────────────────────────────────────────────────────────────
   describe("Batch Minting", function () {
     beforeEach(async function () {
       await pharmaNFT.registerManufacturer(manufacturer.address);
     });
 
     it("Should allow registered manufacturer to mint batch", async function () {
-      const batchID = "BATCH001";
-      const tokenURI = "https://ipfs.io/ipfs/QmExample";
-
-      await expect(pharmaNFT.connect(manufacturer).mintBatch(tokenURI, batchID))
+      await expect(mintBatch(manufacturer, "BATCH001"))
         .to.emit(pharmaNFT, "BatchMinted")
-        .withArgs(1, manufacturer.address, batchID);
+        .withArgs(1, manufacturer.address, "BATCH001");
 
       expect(await pharmaNFT.ownerOf(1)).to.equal(manufacturer.address);
-      
+
       const batchDetails = await pharmaNFT.getBatchDetails(1);
-      expect(batchDetails.batchID).to.equal(batchID);
+      expect(batchDetails.batchID).to.equal("BATCH001");
       expect(batchDetails.currentOwner).to.equal(manufacturer.address);
       expect(batchDetails.currentRole).to.equal(1); // Manufacturer
     });
 
     it("Should not allow non-manufacturer to mint batch", async function () {
-      const batchID = "BATCH001";
-      const tokenURI = "https://ipfs.io/ipfs/QmExample";
-
+      await pharmaNFT.setRole(distributor.address, 2);
       await expect(
-        pharmaNFT.connect(distributor).mintBatch(tokenURI, batchID)
+        mintBatch(distributor, "BATCH001")
       ).to.be.revertedWith("Only manufacturers can perform this action");
     });
 
     it("Should increment token counter after minting", async function () {
-      const batchID = "BATCH001";
-      const tokenURI = "https://ipfs.io/ipfs/QmExample";
-
-      await pharmaNFT.connect(manufacturer).mintBatch(tokenURI, batchID);
+      await mintBatch(manufacturer, "BATCH001");
       expect(await pharmaNFT.tokenCounter()).to.equal(2);
+    });
+
+    it("Should store metadataHash on-chain", async function () {
+      await mintBatch(manufacturer, "BATCH001");
+      const details = await pharmaNFT.getBatchDetails(1);
+      expect(details.metadataHash).to.equal(MOCK_HASH);
     });
   });
 
+  // ─────────────────────────────────────────────────────────────
   describe("Batch Transfer", function () {
     beforeEach(async function () {
       await pharmaNFT.registerManufacturer(manufacturer.address);
@@ -98,47 +109,47 @@ describe("PharmaNFT", function () {
       await pharmaNFT.setRole(retailer.address, 3);
       await pharmaNFT.setRole(pharmacy.address, 4);
 
-      // Mint a batch
-      const batchID = "BATCH001";
-      const tokenURI = "https://ipfs.io/ipfs/QmExample";
-      await pharmaNFT.connect(manufacturer).mintBatch(tokenURI, batchID);
+      // Manufacturer mints; Manufacturer does NOT need a prior scan to transfer
+      await mintBatch(manufacturer, "BATCH001");
     });
 
-    it("Should allow valid transfer from manufacturer to distributor", async function () {
+    it("Should allow valid transfer: Manufacturer → Distributor", async function () {
       await pharmaNFT.connect(manufacturer).transferBatch(1, distributor.address);
 
       expect(await pharmaNFT.ownerOf(1)).to.equal(distributor.address);
-      
-      const batchDetails = await pharmaNFT.getBatchDetails(1);
-      expect(batchDetails.currentOwner).to.equal(distributor.address);
-      expect(batchDetails.currentRole).to.equal(2); // Distributor
+      const d = await pharmaNFT.getBatchDetails(1);
+      expect(d.currentOwner).to.equal(distributor.address);
+      expect(d.currentRole).to.equal(2); // Distributor
     });
 
-    it("Should allow valid transfer from distributor to retailer", async function () {
-      // First transfer to distributor
+    it("Should allow valid transfer: Distributor → Retailer (after scan)", async function () {
       await pharmaNFT.connect(manufacturer).transferBatch(1, distributor.address);
-      
-      // Then transfer to retailer
+
+      // Contract requires Distributor to recordScan before transferring forward
+      await pharmaNFT.connect(distributor).recordScan(1);
       await pharmaNFT.connect(distributor).transferBatch(1, retailer.address);
 
       expect(await pharmaNFT.ownerOf(1)).to.equal(retailer.address);
     });
 
-    it("Should allow valid transfer from retailer to pharmacy", async function () {
-      // Transfer through the chain
+    it("Should allow full chain: Manufacturer → Distributor → Retailer", async function () {
+      // Contract supports: Manufacturer→Distributor, Distributor→Retailer (max chain)
       await pharmaNFT.connect(manufacturer).transferBatch(1, distributor.address);
-      await pharmaNFT.connect(distributor).transferBatch(1, retailer.address);
-      
-      // Final transfer to pharmacy
-      await pharmaNFT.connect(retailer).transferBatch(1, pharmacy.address);
 
-      expect(await pharmaNFT.ownerOf(1)).to.equal(pharmacy.address);
+      await pharmaNFT.connect(distributor).recordScan(1);
+      await pharmaNFT.connect(distributor).transferBatch(1, retailer.address);
+
+      expect(await pharmaNFT.ownerOf(1)).to.equal(retailer.address);
+      const d = await pharmaNFT.getBatchDetails(1);
+      expect(d.currentRole).to.equal(3); // Retailer
     });
 
-    it("Should not allow invalid transfer sequence", async function () {
-      await expect(
-        pharmaNFT.connect(manufacturer).transferBatch(1, retailer.address)
-      ).to.be.revertedWith("Invalid transfer");
+    it("Should allow Manufacturer to skip directly to Retailer", async function () {
+      // Contract explicitly allows Manufacturer → Retailer (direct bypass of Distributor)
+      await pharmaNFT.connect(manufacturer).transferBatch(1, retailer.address);
+      expect(await pharmaNFT.ownerOf(1)).to.equal(retailer.address);
+      const d = await pharmaNFT.getBatchDetails(1);
+      expect(d.currentRole).to.equal(3); // Retailer
     });
 
     it("Should not allow transfer to address without role", async function () {
@@ -147,18 +158,26 @@ describe("PharmaNFT", function () {
       ).to.be.revertedWith("Invalid transfer");
     });
 
+    it("Should not allow Distributor to transfer without scanning first", async function () {
+      await pharmaNFT.connect(manufacturer).transferBatch(1, distributor.address);
+      await expect(
+        pharmaNFT.connect(distributor).transferBatch(1, retailer.address)
+      ).to.be.revertedWith("Scan required before transfer");
+    });
+
     it("Should record transfer history", async function () {
       await pharmaNFT.connect(manufacturer).transferBatch(1, distributor.address);
-      
-      const transferHistory = await pharmaNFT.getTransferHistory(1);
-      expect(transferHistory.length).to.equal(1);
-      expect(transferHistory[0].from).to.equal(manufacturer.address);
-      expect(transferHistory[0].to).to.equal(distributor.address);
-      expect(transferHistory[0].fromRole).to.equal(1);
-      expect(transferHistory[0].toRole).to.equal(2);
+
+      const history = await pharmaNFT.getTransferHistory(1);
+      expect(history.length).to.equal(1);
+      expect(history[0].from).to.equal(manufacturer.address);
+      expect(history[0].to).to.equal(distributor.address);
+      expect(history[0].fromRole).to.equal(1); // Manufacturer
+      expect(history[0].toRole).to.equal(2);   // Distributor
     });
   });
 
+  // ─────────────────────────────────────────────────────────────
   describe("Batch Verification", function () {
     beforeEach(async function () {
       await pharmaNFT.registerManufacturer(manufacturer.address);
@@ -166,10 +185,7 @@ describe("PharmaNFT", function () {
       await pharmaNFT.setRole(retailer.address, 3);
       await pharmaNFT.setRole(pharmacy.address, 4);
 
-      // Mint and transfer batch
-      const batchID = "BATCH001";
-      const tokenURI = "https://ipfs.io/ipfs/QmExample";
-      await pharmaNFT.connect(manufacturer).mintBatch(tokenURI, batchID);
+      await mintBatch(manufacturer, "BATCH001");
       await pharmaNFT.connect(manufacturer).transferBatch(1, distributor.address);
     });
 
@@ -180,16 +196,18 @@ describe("PharmaNFT", function () {
     });
 
     it("Should allow retailer to verify batch", async function () {
+      await pharmaNFT.connect(distributor).recordScan(1);
       await pharmaNFT.connect(distributor).transferBatch(1, retailer.address);
       const tx = await pharmaNFT.connect(retailer).verifyBatch(1);
       await tx.wait();
       expect(tx).to.not.be.null;
     });
 
-    it("Should allow pharmacy to verify batch", async function () {
+    it("Should allow retailer to verify batch after full chain transfer", async function () {
+      // Full chain: Manufacturer → Distributor → Retailer (Retailer→Pharmacy not yet in contract)
+      await pharmaNFT.connect(distributor).recordScan(1);
       await pharmaNFT.connect(distributor).transferBatch(1, retailer.address);
-      await pharmaNFT.connect(retailer).transferBatch(1, pharmacy.address);
-      const tx = await pharmaNFT.connect(pharmacy).verifyBatch(1);
+      const tx = await pharmaNFT.connect(retailer).verifyBatch(1);
       await tx.wait();
       expect(tx).to.not.be.null;
     });
@@ -200,24 +218,19 @@ describe("PharmaNFT", function () {
       ).to.be.revertedWith("Unauthorized verifier");
     });
 
-    it("Should emit verification event", async function () {
+    it("Should emit BatchVerified event", async function () {
       await expect(pharmaNFT.connect(distributor).verifyBatch(1))
         .to.emit(pharmaNFT, "BatchVerified")
         .withArgs(1, distributor.address, true);
     });
   });
 
+  // ─────────────────────────────────────────────────────────────
   describe("Batch Linking", function () {
     beforeEach(async function () {
       await pharmaNFT.registerManufacturer(manufacturer.address);
-
-      // Mint two batches
-      const batchID1 = "BATCH001";
-      const batchID2 = "BATCH002";
-      const tokenURI = "https://ipfs.io/ipfs/QmExample";
-      
-      await pharmaNFT.connect(manufacturer).mintBatch(tokenURI, batchID1);
-      await pharmaNFT.connect(manufacturer).mintBatch(tokenURI, batchID2);
+      await mintBatch(manufacturer, "BATCH001");
+      await mintBatch(manufacturer, "BATCH002");
     });
 
     it("Should allow manufacturer to link batches", async function () {
@@ -242,32 +255,57 @@ describe("PharmaNFT", function () {
       ).to.be.revertedWith("Only manufacturers can perform this action");
     });
 
-    it("Should not allow linking non-existent batches", async function () {
+    it("Should not allow linking non-existent child batch", async function () {
       await expect(
         pharmaNFT.connect(manufacturer).linkChildBatch(1, 999)
       ).to.be.revertedWith("Child token doesn't exist");
     });
   });
 
-  describe("Edge Cases", function () {
-    it("Should handle non-existent token queries", async function () {
-      // This test is skipped as it's not critical for the main functionality
-      // The contract handles non-existent tokens gracefully
-    });
-
-    it("Should handle empty transfer history", async function () {
+  // ─────────────────────────────────────────────────────────────
+  describe("QR Scan & Counterfeit Detection", function () {
+    beforeEach(async function () {
       await pharmaNFT.registerManufacturer(manufacturer.address);
-      const batchID = "BATCH001";
-      const tokenURI = "https://ipfs.io/ipfs/QmExample";
-      await pharmaNFT.connect(manufacturer).mintBatch(tokenURI, batchID);
-
-      const transferHistory = await pharmaNFT.getTransferHistory(1);
-      expect(transferHistory.length).to.equal(0);
+      await pharmaNFT.setRole(distributor.address, 2);
+      await mintBatch(manufacturer, "BATCH001");
+      await pharmaNFT.connect(manufacturer).transferBatch(1, distributor.address);
     });
 
-    it("Should handle role queries for addresses without roles", async function () {
+    it("Should allow distributor to record a scan", async function () {
+      await expect(pharmaNFT.connect(distributor).recordScan(1))
+        .to.emit(pharmaNFT, "BatchScanned")
+        .withArgs(1, 2, distributor.address, await ethers.provider.getBlock("latest").then(b => b.timestamp + 1));
+    });
+
+    it("Should flag counterfeit and revert on double-scan by same role", async function () {
+      await pharmaNFT.connect(distributor).recordScan(1);
+      await expect(
+        pharmaNFT.connect(distributor).recordScan(1)
+      ).to.be.revertedWith("Already scanned for this role");
+    });
+
+    it("Should flag counterfeit and revert on wrong-role scan", async function () {
+      // Retailer tries to scan while batch is at Distributor — wrong role
+      await pharmaNFT.setRole(retailer.address, 3);
+      await expect(
+        pharmaNFT.connect(retailer).recordScan(1)
+      ).to.be.revertedWith("Scan by wrong role");
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  describe("Edge Cases", function () {
+    it("Should return empty transfer history for freshly minted batch", async function () {
+      await pharmaNFT.registerManufacturer(manufacturer.address);
+      await mintBatch(manufacturer, "BATCH001");
+
+      const history = await pharmaNFT.getTransferHistory(1);
+      expect(history.length).to.equal(0);
+    });
+
+    it("Should return Role.None (0) for addresses without roles", async function () {
       const role = await pharmaNFT.getRole(otherAccount.address);
-      expect(role).to.equal(0); // None role
+      expect(role).to.equal(0);
     });
   });
 });

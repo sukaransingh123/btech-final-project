@@ -3,13 +3,22 @@ require('dotenv').config({ path: './env' });
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
-  solidity: "0.8.28",
+  solidity: {
+    version: "0.8.28",
+    settings: {
+      optimizer: {
+        enabled: true,
+        runs: 200  // Balanced: lower = smaller bytecode, higher = cheaper repeated calls
+      }
+    }
+  },
   networks: {
     hardhat: {
-      chainId: 1337
+      chainId: 1337,
+      blockGasLimit: 30_000_000  // Match Polygon's gas limit for accurate local testing
     },
     amoy: {
-      url: process.env.AMOY_RPC_URL || "https://rpc-amoy.polygon.technology",
+      url: process.env.AMOY_RPC_URL || "https://polygon-amoy.drpc.org",
       accounts: [
         process.env.PRIVATE_KEY_OWNER,
         process.env.PRIVATE_KEY_MANUFACTURER,

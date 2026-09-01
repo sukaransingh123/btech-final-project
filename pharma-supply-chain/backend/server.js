@@ -41,6 +41,7 @@ app.use('/api/metadata', require('./routes/metadata'));
 app.use('/api/transfers', require('./routes/transfers'));
 app.use('/api/qr', require('./routes/qr'));
 app.use('/api/verify', require('./routes/verify'));
+app.use('/api/supply-chain', require('./routes/supplyChain'));
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -66,5 +67,4 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
-
 

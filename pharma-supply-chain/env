@@ -12,11 +12,11 @@ PRIVATE_KEY_PHARMACY="466896fe5d170e063b06323faa06c8390ae0a18074956ee1ec7ff5d2e9
 # PolygonScan API key for contract verification
 POLYGONSCAN_API_KEY="GTB1Q1SZT4UW27T2C7BI7IC9NXHVYF65NQ"
 
-# MongoDB Configuration (MongoDB Atlas)
-MONGODB_URI=mongodb+srv://maryambahloolibtech2022:Bangtanb-123@cluster0.eqx1b.mongodb.net/pharma-supply-chain?appName=Cluster0
+# MongoDB Configuration — Sukaran's own Atlas cluster (pharma-cluster)
+MONGODB_URI=mongodb+srv://sukaransingh012_db_user:9TRw9wJLTj03BAou@pharma-cluster.kmrmhyi.mongodb.net/pharma-supply-chain?retryWrites=true&w=majority&appName=pharma-cluster
 
 # Backend API Configuration
 PORT=5000
 
 # Smart Contract Configuration
-CONTRACT_ADDRESS=0xd36e5c231DB89afe06Ff740b958e918618EcE058
+CONTRACT_ADDRESS=0x2C56C3107EE29eaE4A486C6c1244bCbb3E2Ee11c

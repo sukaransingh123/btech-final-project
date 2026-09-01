@@ -214,7 +214,7 @@ const GenerateQR = ({ contract, account }) => {
         network: {
           chainId: 80002, // Polygon Amoy
           chainName: 'Polygon Amoy',
-          rpcUrl: 'https://rpc-amoy.polygon.technology'
+          rpcUrl: 'https://polygon-amoy.drpc.org'
         },
         verifyUrl: `${baseUrl}/verify/${selectedBatch}`,
         timestamp: Date.now()

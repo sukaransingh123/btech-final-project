@@ -23,6 +23,7 @@ try {
   CONTRACT_ABI = [
     "function mintBatch(string tokenURI, string batchID, string metadataHash)",
     "function transferBatch(uint256 tokenId, address newOwner)",
+    "function transferParentAndChildren(uint256 parentId, address newOwner)",
     "function verifyBatch(uint256 tokenId) returns (bool)",
     "function getBatchDetails(uint256 tokenId) view returns (tuple(uint256 tokenId, address currentOwner, uint8 currentRole, string batchID, string metadataHash, string metadataURI, string qrCodeURI, uint256 timestamp, address manufacturer))",
     "function getTransferHistory(uint256 tokenId) view returns (tuple(address from, address to, uint256 timestamp, uint8 fromRole, uint8 toRole)[])",
@@ -34,7 +35,12 @@ try {
     "function linkChildBatch(uint256 parentId, uint256 childId)",
     "function getChildBatches(uint256 parentId) view returns (uint256[])",
     "function getParentBatch(uint256 childId) view returns (uint256)",
-    "function isManufacturer(address _manufacturer) view returns (bool)"
+    "function isManufacturer(address _manufacturer) view returns (bool)",
+    "function recordScan(uint256 tokenId)",
+    "function recordChildScan(uint256 childId)",
+    "function scannedByRole(uint256 tokenId, uint8 role) view returns (bool)",
+    "function isCounterfeit(uint256 tokenId) view returns (bool)",
+    "function mintChildBatches(uint256 parentId, uint256 count, string childTokenURI)"
   ];
 }
 
@@ -164,22 +170,23 @@ export class ContractUtils {
     return ROLE_CLASSES[role] || '';
   }
 
-  // Check if transfer is valid
+  // Check if transfer is valid — Fixed: includes Manufacturer→Retailer path
   isValidTransfer(currentRole, nextRole) {
     return (
       (currentRole === ROLES.MANUFACTURER && nextRole === ROLES.DISTRIBUTOR) ||
+      (currentRole === ROLES.MANUFACTURER && nextRole === ROLES.RETAILER) ||
       (currentRole === ROLES.DISTRIBUTOR && nextRole === ROLES.RETAILER) ||
       (currentRole === ROLES.RETAILER && nextRole === ROLES.PHARMACY)
     );
   }
 
-  // Get next role in sequence
+  // Get next role(s) in sequence — Fixed: Manufacturer can go to Distributor OR Retailer
   getNextRole(currentRole) {
     switch (currentRole) {
-      case ROLES.MANUFACTURER: return ROLES.DISTRIBUTOR;
-      case ROLES.DISTRIBUTOR: return ROLES.RETAILER;
-      case ROLES.RETAILER: return ROLES.PHARMACY;
-      default: return null;
+      case ROLES.MANUFACTURER: return [ROLES.DISTRIBUTOR, ROLES.RETAILER];
+      case ROLES.DISTRIBUTOR: return [ROLES.RETAILER];
+      case ROLES.RETAILER: return [ROLES.PHARMACY];
+      default: return [];
     }
   }
 }

@@ -69,6 +69,10 @@ const Dashboard = ({ contract, readContract, account, userRole }) => {
       let totalBatches = 0;
       let myBatchesCount = 0;
 
+      // DEMO MODE: Ignore batches minted before this timestamp (Aug 25, 2026, 18:46 IST)
+      // This provides a "clean slate" for the presentation without destroying blockchain history.
+      const DEMO_START_TIMESTAMP = 1787663700;
+      
       const batchSize = 10;
       for (let i = 0; i < tokenIds.length; i += batchSize) {
         const chunk = tokenIds.slice(i, i + batchSize);
@@ -89,6 +93,10 @@ const Dashboard = ({ contract, readContract, account, userRole }) => {
         
         results.forEach(result => {
           if (result && result.batchDetails) {
+            const batchTimestamp = Number(result.batchDetails.timestamp);
+            // Hide old batches for the demo
+            if (batchTimestamp < DEMO_START_TIMESTAMP) return;
+
             if (result.parent === 0) {
               totalBatches++;
               allBatches.push({
@@ -130,6 +138,7 @@ const Dashboard = ({ contract, readContract, account, userRole }) => {
       
     } catch (error) {
       console.error('Dashboard load error:', error);
+      setError('Error loading dashboard: ' + (error.message || error.toString()));
     } finally {
       setLoading(false);
     }
@@ -140,24 +149,25 @@ const Dashboard = ({ contract, readContract, account, userRole }) => {
     loadDashboardData();
   };
 
+  // Fixed: use numeric keys to match the numeric role values from the contract
   const getRoleName = (role) => {
     const roles = {
-      'Manufacturer': 'Manufacturer',
-      'Distributor': 'Distributor',
-      'Retailer': 'Retailer',
-      'Pharmacy': 'Pharmacy'
+      1: 'Manufacturer',
+      2: 'Distributor',
+      3: 'Retailer',
+      4: 'Pharmacy'
     };
-    return roles[role] || 'Unknown';
+    return roles[Number(role)] || 'Unknown';
   };
 
   const getRoleBadgeClass = (role) => {
     const classes = {
-      'Manufacturer': 'role-manufacturer',
-      'Distributor': 'role-distributor',
-      'Retailer': 'role-retailer',
-      'Pharmacy': 'role-pharmacy'
+      1: 'role-manufacturer',
+      2: 'role-distributor',
+      3: 'role-retailer',
+      4: 'role-pharmacy'
     };
-    return classes[role] || '';
+    return classes[Number(role)] || '';
   };
 
   if (loading) {

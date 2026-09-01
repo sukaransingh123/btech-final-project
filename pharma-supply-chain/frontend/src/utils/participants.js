@@ -1,7 +1,8 @@
 export const PARTICIPANTS = {
-  MANUFACTURER: "0x6c45A0eA03E5719a4A8d5fb2c2A7eD4D59eA2267",
-  DISTRIBUTOR: "0x9236b51387c167a3D2fE14BdA6bc7517FD0C74C5",
-  RETAILER: "0x1d22d371e231E6ccA714CF3a4163a655D5914C02"
+  MANUFACTURER: "0x093F8CA5f70Dd1dbC39Df1A30F2F0D8Ab05B8510",
+  DISTRIBUTOR: "0x6D9149Ca7E04FDAE6c2b880d4C22d1e834e436b5",
+  RETAILER: "0xA514337cbcc4149952220A23487eF961E748Ce8C",
+  PHARMACY: "0x02d61482CAB7847e8E46D68C58e2601a8c2D589c"
 };
 
 // Demo participant information with Indian names and locations
@@ -38,6 +39,17 @@ export const PARTICIPANT_INFO = {
       pinCode: "560001"
     },
     role: "Retailer"
+  },
+  [PARTICIPANTS.PHARMACY.toLowerCase()]: {
+    name: "Local Care Pharmacy",
+    contactPerson: "Vikram Singh",
+    location: {
+      city: "Pune",
+      state: "Maharashtra",
+      address: "Main Street, Pune - 411001",
+      pinCode: "411001"
+    },
+    role: "Pharmacy"
   }
 };
 

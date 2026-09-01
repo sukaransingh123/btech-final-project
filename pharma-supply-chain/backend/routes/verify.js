@@ -164,22 +164,21 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Final verdict - blockchain is source of truth
-    // Must pass: batchID match, manufacturer match, not counterfeit
-    // Owner can change during transfers, so ownerMatch is not required
-    // Metadata hash mismatch is suspicious but not necessarily blocking if blockchain data is valid
+    // Final verdict — blockchain is source of truth
+    // SECURITY FIX: Use === true instead of !== false
+    // so that undefined (blockchain unreachable) causes FAIL, not pass.
     const criticalChecks = [
-      verificationResult.checks.blockchainMatch?.batchIDMatch !== false,
-      verificationResult.checks.blockchainMatch?.manufacturerMatch !== false,
+      verificationResult.checks.blockchainMatch?.batchIDMatch === true,
+      verificationResult.checks.blockchainMatch?.manufacturerMatch === true,
       verificationResult.checks.counterfeitFlag === true // Not counterfeit
     ];
     
     const allCriticalPassed = criticalChecks.every(check => check === true);
-    const hasBlockingErrors = verificationResult.errors.some(err => 
-      err.includes('counterfeit') || err.includes('Batch ID mismatch') || err.includes('Manufacturer mismatch')
+    const hasBlockingErrors = verificationResult.errors.some(err =>
+      err.includes('counterfeit') || err.includes('Batch ID mismatch') || err.includes('Manufacturer mismatch') || err.includes('Blockchain verification error')
     );
 
-    // Authentic if critical checks pass and no blocking errors
+    // Authentic only if ALL critical blockchain checks pass and no blocking errors
     verificationResult.authentic = allCriticalPassed && !hasBlockingErrors;
 
     res.json({

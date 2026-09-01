@@ -18,8 +18,9 @@ const Navbar = ({ account, userRole, onDisconnect, networkLabel, balanceLabel })
     }
   };
 
+  // Fixed: use Number(role) for consistent comparison
   const getRoleBadgeClass = (role) => {
-    switch (role) {
+    switch (Number(role)) {
       case 1: return 'bg-blue-100 text-blue-800';
       case 2: return 'bg-purple-100 text-purple-800';
       case 3: return 'bg-green-100 text-green-800';
@@ -56,24 +57,28 @@ const Navbar = ({ account, userRole, onDisconnect, networkLabel, balanceLabel })
                   </Link>
                 </>
               )}
-              {(userRole === 2 || userRole === 3 || userRole === 4) && (
+              {/* Fixed: Manufacturer (1) can also transfer, plus Distributor (2), Retailer (3), Pharmacy (4) */}
+              {(userRole === 1 || userRole === 2 || userRole === 3 || userRole === 4) && (
                 <Link to="/transfer-batch" className="hover:text-blue-200 transition-colors font-medium">
                   Transfer Batch
                 </Link>
               )}
-              <Link to="/verify-batch" className="hover:text-blue-200 transition-colors font-medium">
-                Verify
-              </Link>
+              {(userRole !== 1) && (
+                <Link to="/verify-batch" className="hover:text-blue-200 transition-colors font-medium">
+                  Verify
+                </Link>
+              )}
             </div>
           </div>
 
           {/* User Info & Actions */}
           <div className="flex items-center gap-4">
             {/* Desktop User Info */}
-            <div className="hidden md:flex items-center gap-4">
+            <div className="hidden md:flex items-center gap-6 ml-6">
               {networkLabel && (
-                <div className="text-xs text-blue-200">
-                  {networkLabel} {balanceLabel && `• ${balanceLabel}`}
+                <div className="text-xs text-blue-200 whitespace-nowrap text-right flex flex-col justify-center">
+                  <span className="font-medium opacity-80">{networkLabel}</span>
+                  {balanceLabel && <span className="font-bold opacity-100">{balanceLabel}</span>}
                 </div>
               )}
               <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getRoleBadgeClass(userRole)}`}>
@@ -106,18 +111,24 @@ const Navbar = ({ account, userRole, onDisconnect, networkLabel, balanceLabel })
           </div>
         </div>
 
-        {/* Mobile Menu */}
+        {/* Mobile Menu — Fixed: all links now present including Transfer Batch */}
         {mobileMenuOpen && (
           <div className="md:hidden py-4 border-t border-blue-600">
             <div className="flex flex-col gap-2">
-              <Link to="/" className="px-4 py-2 hover:bg-blue-800 rounded-lg">Dashboard</Link>
+              <Link to="/" className="px-4 py-2 hover:bg-blue-800 rounded-lg" onClick={() => setMobileMenuOpen(false)}>Dashboard</Link>
               {userRole === 1 && (
                 <>
-                  <Link to="/create-batch" className="px-4 py-2 hover:bg-blue-800 rounded-lg">Create Batch</Link>
-                  <Link to="/generate-qr" className="px-4 py-2 hover:bg-blue-800 rounded-lg">Generate QR</Link>
+                  <Link to="/create-batch" className="px-4 py-2 hover:bg-blue-800 rounded-lg" onClick={() => setMobileMenuOpen(false)}>Create Batch</Link>
+                  <Link to="/generate-qr" className="px-4 py-2 hover:bg-blue-800 rounded-lg" onClick={() => setMobileMenuOpen(false)}>Generate QR</Link>
                 </>
               )}
-              <Link to="/verify-batch" className="px-4 py-2 hover:bg-blue-800 rounded-lg">Verify</Link>
+              {/* Fixed: Transfer Batch now appears in mobile menu for all eligible roles */}
+              {(userRole === 1 || userRole === 2 || userRole === 3 || userRole === 4) && (
+                <Link to="/transfer-batch" className="px-4 py-2 hover:bg-blue-800 rounded-lg" onClick={() => setMobileMenuOpen(false)}>Transfer Batch</Link>
+              )}
+              {(userRole !== 1) && (
+                <Link to="/verify-batch" className="px-4 py-2 hover:bg-blue-800 rounded-lg" onClick={() => setMobileMenuOpen(false)}>Verify</Link>
+              )}
               <div className="px-4 py-2 border-t border-blue-600 mt-2 pt-2">
                 <div className="text-xs text-blue-200 mb-2">
                   {networkLabel} {balanceLabel && `• ${balanceLabel}`}

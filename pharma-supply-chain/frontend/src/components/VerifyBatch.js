@@ -20,6 +20,12 @@ const VerifyBatch = ({ contract, readContract, account }) => {
   const [verificationErrors, setVerificationErrors] = useState([]);
   const [productInfo, setProductInfo] = useState(null);
   const [ipfsCid, setIpfsCid] = useState('');
+  
+  // State for on-chain scan recording
+  const [needsOnChainScan, setNeedsOnChainScan] = useState(false);
+  const [isRecordingScan, setIsRecordingScan] = useState(false);
+  const [scanRecorded, setScanRecorded] = useState(false);
+  const [scannedBatchId, setScannedBatchId] = useState(null);
 
   useEffect(() => {
     if (tokenId && (readContract || contract)) {
@@ -31,7 +37,8 @@ const VerifyBatch = ({ contract, readContract, account }) => {
       if (dataParam) {
         const json = decodeURIComponent(escape(atob(dataParam)));
         setQrInput(json);
-        setTimeout(() => { verifyQRCode().catch(() => {}); }, 0);
+        // Fixed: pass json directly instead of reading stale state
+        setTimeout(() => { verifyQRCode(json).catch(() => {}); }, 100);
       }
     } catch (_) {}
   }, [tokenId, readContract, contract]);
@@ -66,35 +73,27 @@ const VerifyBatch = ({ contract, readContract, account }) => {
 
   const onScanDetected = async (text) => {
     console.log('onScanDetected called with text:', text);
-    console.log('Text type:', typeof text);
-    console.log('Text length:', text?.length);
-    
     setShowScanner(false);
     try {
       if (!text || text.trim() === '') {
-        console.error('Empty text received from scanner');
         setMessage('Error: Empty QR code data received');
         return;
       }
-      
       setQrInput(text);
-      console.log('QR input set, waiting before verification...');
-      
-      // Small delay to ensure scanner closes before verification
+      // Fixed: pass text directly to avoid stale qrInput closure
       setTimeout(async () => {
-        console.log('Starting verification...');
-        await verifyQRCode();
-      }, 200);
+        await verifyQRCode(text);
+      }, 100);
     } catch (error) {
-      console.error('Error in onScanDetected:', error);
       setMessage(`Error processing QR code: ${error.message}`);
     }
   };
 
-  const verifyQRCode = async () => {
-    console.log('verifyQRCode called, qrInput:', qrInput?.substring(0, 100));
+  // Fixed: accepts optional text param to avoid stale state race condition
+  const verifyQRCode = async (inputText) => {
+    const dataToVerify = inputText || qrInput;
     
-    if (!qrInput || !qrInput.trim()) {
+    if (!dataToVerify || !dataToVerify.trim()) {
       setMessage('Please enter QR code data');
       return;
     }
@@ -107,7 +106,7 @@ const VerifyBatch = ({ contract, readContract, account }) => {
       console.log('Parsing QR input as JSON...');
       let qrData;
       try {
-        qrData = JSON.parse(qrInput);
+        qrData = JSON.parse(dataToVerify);
         console.log('QR data parsed successfully:', qrData);
       } catch (parseError) {
         console.error('Failed to parse QR input as JSON:', parseError);
@@ -232,84 +231,58 @@ const VerifyBatch = ({ contract, readContract, account }) => {
         }
       }
       
-      // CRITICAL: Check scan status BEFORE setting isValid
-      // This ensures repeated scans are detected and marked counterfeit
-      let scanCheckPassed = true;
-      let scanError = null;
-      
-      if (contract && account && qrData.data.type === 'parent') {
-        try {
-          // First check if batch is already marked counterfeit
-          try {
-            const isCounterfeitOnChain = await contract.isCounterfeit(qrData.data.tokenId);
-            if (isCounterfeitOnChain) {
-              scanCheckPassed = false;
-              scanError = { type: 'counterfeit', message: 'Batch already flagged as counterfeit' };
-            }
-          } catch (_) {}
-          
-          const userRole = await contract.getRole(account);
-          const r = Number(userRole);
-          
-          // Get batch current role for verification
-          let batchCurrentRole = null;
-          try {
-            const batchDetails = await contract.getBatchDetails(qrData.data.tokenId);
-            batchCurrentRole = Number(batchDetails.currentRole);
-          } catch (_) {}
-          
-          // Only check scan for Distributor (2) and Retailer (3)
-          if ((r === 2 || r === 3) && scanCheckPassed) {
-            // Check if user role matches batch current role
-            if (batchCurrentRole && r !== batchCurrentRole) {
-              scanCheckPassed = false;
-              scanError = { type: 'wrong_role', message: `Scan by wrong role. Expected role ${batchCurrentRole}, got ${r}` };
-            } else {
-              // Check if already scanned BEFORE attempting to record
+          // READ-ONLY scan check: verify role is correct but do NOT write to blockchain.
+          // Writing recordScan() during verification caused legitimate batches to be
+          // flagged as counterfeit when the wrong role happened to verify them.
+          let scanCheckPassed = true;
+          let scanError = null;
+          if (qrData.data?.type === 'parent') {
+            try {
+              // Check if batch is already marked counterfeit on-chain (read-only)
               try {
-                const alreadyScanned = await contract.scannedByRole(qrData.data.tokenId, r);
-                if (alreadyScanned) {
-                  scanCheckPassed = false;
-                  scanError = { type: 'repeated_scan', message: 'Repeated scan detected for this role' };
-                } else {
-                  // Try to record the scan - this will fail if already scanned
-                  try {
-                    const tx = await contract.recordScan(qrData.data.tokenId);
-                    await tx.wait();
-                    // Scan recorded successfully - check if it was marked counterfeit
-                    try {
-                      const isCounterfeitOnChain = await contract.isCounterfeit(qrData.data.tokenId);
-                      if (isCounterfeitOnChain) {
-                        scanCheckPassed = false;
-                        scanError = { type: 'repeated_scan', message: 'Repeated scan detected - batch marked as counterfeit' };
-                      }
-                    } catch (cfErr) {
-                      // Non-critical - continue
-                    }
-                  } catch (recordErr) {
-                    const errorMsg = recordErr.message || recordErr.reason || recordErr.shortMessage || '';
-                    if (errorMsg.includes('wrong role') || errorMsg.includes('Wrong role')) {
-                      scanCheckPassed = false;
-                      scanError = { type: 'wrong_role', message: 'Scan by wrong role' };
-                    } else if (errorMsg.includes('Already scanned') || errorMsg.includes('already scanned')) {
-                      scanCheckPassed = false;
-                      scanError = { type: 'repeated_scan', message: 'Repeated scan detected for this role' };
-                    } else {
-                      // Other error - might be network issue, but continue
-                      console.error('Error recording scan:', recordErr);
-                    }
+                const contractToUse = contract || readContract;
+                if (contractToUse) {
+                  const isCounterfeitOnChain = await contractToUse.isCounterfeit(qrData.data.tokenId);
+                  if (isCounterfeitOnChain) {
+                    scanCheckPassed = false;
+                    scanError = { type: 'counterfeit', message: 'Batch already flagged as counterfeit on blockchain' };
                   }
                 }
-              } catch (checkErr) {
-                console.error('Error checking scan status:', checkErr);
-                // Continue verification but log the error
+              } catch (_) {}
+
+              // If connected with a wallet, also check that the user role is correct (read-only)
+              if (contract && account && scanCheckPassed) {
+                try {
+                  const userRole = await contract.getRole(account);
+                  const r = Number(userRole);
+                  const batchDetails = await contract.getBatchDetails(qrData.data.tokenId);
+                  const batchCurrentRole = Number(batchDetails.currentRole);
+
+                  // Only Distributor (2) and Retailer (3) need to record scans on-chain to unlock their transfer ability.
+                  // Pharmacy (4) is the end of the line, so they only verify locally.
+                  if ((r === 2 || r === 3) && batchCurrentRole) {
+                    if (r === batchCurrentRole) {
+                      // Correct role is scanning! Check if they already recorded their scan on-chain
+                      try {
+                        const alreadyScanned = await contract.scannedByRole(qrData.data.tokenId, r);
+                        if (!alreadyScanned) {
+                          setNeedsOnChainScan(true);
+                          setScannedBatchId(qrData.data.tokenId);
+                        } else {
+                          setScanRecorded(true);
+                        }
+                      } catch (_) {}
+                    } else {
+                      // Role mismatch: show warning but don't flag counterfeit
+                      console.warn(`Role mismatch during verify: scanner role ${r}, batch role ${batchCurrentRole}`);
+                    }
+                  }
+                } catch (_) {}
               }
+            } catch (err) {
+              console.error('Error in scan check:', err);
             }
           }
-        } catch (err) {
-          console.error('Error in scan verification:', err);
-        }
-      }
       
       // Set validation result based on both signature verification AND scan check
       const isAuthentic = verificationResult.authentic && scanCheckPassed;
@@ -405,14 +378,32 @@ const VerifyBatch = ({ contract, readContract, account }) => {
           setCounterfeit(true);
           setCounterfeitReason(verificationResult.verification.errors?.join(', ') || 'Verification failed');
         }
+        setIsValid(false);
       }
-
     } catch (error) {
-      console.error('Error verifying QR code:', error);
-      setMessage(`Error: ${error.message}`);
+      console.error('QR verification error:', error);
+      setMessage(`❌ Verification failed: ${error.message || 'Invalid QR code'}`);
       setIsValid(false);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRecordScan = async () => {
+    if (!contract || !scannedBatchId) return;
+    try {
+      setIsRecordingScan(true);
+      const tx = await contract.recordScan(scannedBatchId);
+      setMessage('Recording scan on blockchain...');
+      await tx.wait();
+      setScanRecorded(true);
+      setNeedsOnChainScan(false);
+      setMessage('✅ Product authenticated AND scan recorded on blockchain. Ready for transfer!');
+    } catch (err) {
+      console.error('Error recording scan:', err);
+      setMessage(`❌ Failed to record scan: ${err.shortMessage || err.reason || err.message}`);
+    } finally {
+      setIsRecordingScan(false);
     }
   };
 
@@ -495,7 +486,7 @@ const VerifyBatch = ({ contract, readContract, account }) => {
                         ? 'bg-green-100 text-green-800' 
                         : 'bg-pink-100 text-pink-800'
                     }`}>
-                      {productInfo?.drugName || 'Paracetamol 500mg'}
+                      {productInfo?.drugName || 'Unknown Product (Not in DB)'}
                     </span>
                   </div>
                   
@@ -571,6 +562,55 @@ const VerifyBatch = ({ contract, readContract, account }) => {
                 Paste the CID of your JSON file uploaded to IPFS Desktop to view batch details.
               </p>
             </div>
+
+            {/* Blockchain Record Scan Action */}
+            {isValid && !counterfeit && needsOnChainScan && !scanRecorded && (
+              <div className="p-6 bg-yellow-50 border-t border-yellow-200">
+                <div className="flex items-center gap-2 mb-3">
+                  <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  <h3 className="text-lg font-bold text-yellow-800">Action Required: Record Scan</h3>
+                </div>
+                <p className="text-sm text-yellow-700 mb-4">
+                  You have successfully authenticated this batch. To legally transfer it to the next stakeholder, you must record this scan on the blockchain.
+                </p>
+                <button
+                  onClick={handleRecordScan}
+                  disabled={isRecordingScan}
+                  className="w-full bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isRecordingScan ? (
+                    <>
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                      Recording to Blockchain...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Record Scan on Blockchain
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {/* Scan Recorded Confirmation */}
+            {isValid && !counterfeit && scanRecorded && (
+              <div className="p-6 bg-green-50 border-t border-green-200">
+                <div className="flex items-center gap-2 mb-2">
+                  <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <h3 className="text-lg font-bold text-green-800">Scan Recorded</h3>
+                </div>
+                <p className="text-sm text-green-700">
+                  Your scan is permanently recorded on the blockchain. This batch is ready for transfer.
+                </p>
+              </div>
+            )}
 
             {/* Security Alert for Counterfeit */}
             {(!isValid || counterfeit) && verificationErrors.length > 0 && (
@@ -666,11 +706,11 @@ const VerifyBatch = ({ contract, readContract, account }) => {
           <h2 className="text-xl font-bold text-gray-800 mb-4">Scan or Enter QR Code</h2>
           
           {message && (
-            <div className={`mb-4 p-4 rounded-lg ${
-              message.includes('Error') || message.includes('FAILED') 
-                ? 'bg-red-50 text-red-700 border border-red-200' 
-                : 'bg-blue-50 text-blue-700 border border-blue-200'
-            }`}>
+            <div className={`mb-4 p-4 rounded-lg shadow-sm border ${
+              message.includes('Error') || message.includes('FAILED') || message.includes('❌') || message.includes('Counterfeit') || message.includes('counterfeit') || message.toLowerCase().includes('revert') || message.toLowerCase().includes('failed')
+                ? 'bg-red-50 text-red-800 border-red-300' 
+                : 'bg-blue-50 text-blue-800 border-blue-300'
+            } break-words overflow-hidden whitespace-pre-wrap`}>
               {message}
             </div>
           )}
@@ -691,7 +731,7 @@ const VerifyBatch = ({ contract, readContract, account }) => {
 
             <div className="flex flex-col sm:flex-row gap-3">
               <button 
-                onClick={verifyQRCode}
+                onClick={() => verifyQRCode()}
                 disabled={loading || !qrInput.trim()}
                 className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >

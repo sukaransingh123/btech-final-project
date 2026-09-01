@@ -145,6 +145,24 @@ class ApiService {
     return this.request(`/transfers${queryString ? `?${queryString}` : ''}`);
   }
 
+  // Phase 2 bridge: reads the PharmaSupplyChain lifecycle contract through backend.
+  async getSupplyChainProvenance(batchId) {
+    return this.request(`/supply-chain/batches/${encodeURIComponent(batchId)}/provenance`);
+  }
+
+  async verifySupplyChainBatch(batchId, signedTransitions = []) {
+    return this.request(`/supply-chain/batches/${encodeURIComponent(batchId)}/verify`, {
+      method: 'POST',
+      body: JSON.stringify({ signedTransitions })
+    });
+  }
+
+  async saveSupplyChainAudit(batchId, audit) {
+    return this.request(`/supply-chain/batches/${encodeURIComponent(batchId)}/audits`, {
+      method: 'POST', body: JSON.stringify(audit)
+    });
+  }
+
   // Health check
   async healthCheck() {
     return this.request('/health');
@@ -153,5 +171,3 @@ class ApiService {
 
 const apiService = new ApiService();
 export default apiService;
-
-

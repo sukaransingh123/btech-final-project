@@ -16,6 +16,8 @@ import RegisterManufacturer from './components/RegisterManufacturer';
 import QRGenerator from './components/QRGenerator';
 import GenerateIPFSJson from './components/GenerateIPFSJson';
 import IpfsViewPage from './pages/IpfsViewPage';
+import SupplyChainTracker from './components/SupplyChainTracker';
+import LifecyclePortal from './components/LifecyclePortal';
 import './App.css';
 import { CONTRACT_ABI, CONTRACT_ADDRESS } from './utils/contract';
 
@@ -33,11 +35,35 @@ function App() {
     initializeReadContract();
     // Auto-connect wallet if available (optional)
     checkWalletConnection();
+
+    // Listen for MetaMask account and chain changes
+    if (window.ethereum) {
+      const handleAccountsChanged = (accounts) => {
+        if (accounts.length === 0) {
+          // User disconnected all accounts
+          setAccount(null);
+          setContract(null);
+          setUserRole(null);
+        } else {
+          // Account switched — reconnect
+          connectWallet();
+        }
+      };
+      const handleChainChanged = () => {
+        window.location.reload();
+      };
+      window.ethereum.on('accountsChanged', handleAccountsChanged);
+      window.ethereum.on('chainChanged', handleChainChanged);
+      return () => {
+        window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+        window.ethereum.removeListener('chainChanged', handleChainChanged);
+      };
+    }
   }, []);
 
   const initializeReadContract = async () => {
     try {
-      const readProvider = new ethers.JsonRpcProvider('https://rpc-amoy.polygon.technology');
+      const readProvider = new ethers.JsonRpcProvider('https://polygon-amoy.drpc.org');
       const pharmaRead = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, readProvider);
       setReadContract(pharmaRead);
       console.log('Read-only contract initialized (no MetaMask required)');
@@ -146,6 +172,7 @@ function App() {
         const roleNum = Number(role);
         console.log('Role from contract:', roleNum);
         setUserRole(roleNum);
+        setLoading(false); // Fixed: clear loading on successful connection
         
         // If role is 0 (None), check if account matches known manufacturer
         if (roleNum === 0) {
@@ -201,13 +228,13 @@ function App() {
   };
 
   const roleHome = () => {
-    if (!account) return '/verify-batch'; // Default to verify for non-connected users
+    if (!account) return '/verify-batch';
     switch (userRole) {
       case 1: return '/manufacturer';
       case 2: return '/distributor';
       case 3: return '/retailer';
-      case 4: return '/consumer';
-      default: return '/verify-batch';
+      case 4: return '/consumer'; // Pharmacy maps to consumer dashboard
+      default: return '/';
     }
   };
 
@@ -226,6 +253,8 @@ function App() {
           <Routes>
             {/* Verify routes - ALWAYS accessible, no MetaMask required */}
             <Route path="/verify-batch" element={<VerifyBatch contract={contract} readContract={readContract} account={account} />} />
+            <Route path="/supply-chain-tracker" element={<SupplyChainTracker />} />
+            <Route path="/lifecycle-portal" element={<LifecyclePortal />} />
             <Route path="/verify/:tokenId" element={<VerifyBatch contract={contract} readContract={readContract} account={account} />} />
             <Route path="/ipfs" element={<IpfsViewPage />} />
             <Route path="/ipfs-qr" element={<QRGenerator />} />
@@ -253,7 +282,7 @@ function App() {
                     <h1>Pharma Supply Chain Tracker</h1>
                     <p>Connect your MetaMask wallet to access the pharmaceutical supply chain system.</p>
                     <p style={{ fontSize: '14px', color: '#666', marginTop: '10px' }}>
-                      Or <a href="/verify-batch" style={{ color: '#4F46E5' }}>verify a product</a> without connecting (for consumers)
+                      Or <a href="/supply-chain-tracker" style={{ color: '#4F46E5' }}>track a Phase 1 batch</a> without connecting (for consumers)
                     </p>
                     <button 
                       className="btn" 
