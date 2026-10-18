@@ -11,12 +11,38 @@ function generateMetadataHash(metadata) {
   const normalized = {
     batchID: String(metadata.batchID || ''),
     drugName: String(metadata.drugName || ''),
-    manufacturingDate: metadata.manufacturingDate instanceof Date
-      ? metadata.manufacturingDate.toISOString().split('T')[0]
-      : metadata.manufacturingDate ? new Date(metadata.manufacturingDate).toISOString().split('T')[0] : '',
-    expiryDate: metadata.expiryDate instanceof Date
-      ? metadata.expiryDate.toISOString().split('T')[0]
-      : metadata.expiryDate ? new Date(metadata.expiryDate).toISOString().split('T')[0] : '',
+    manufacturingDate: (function() {
+      if (metadata.manufacturingDate instanceof Date) return metadata.manufacturingDate.toISOString().split('T')[0];
+      if (!metadata.manufacturingDate) return '';
+      try {
+        let dStr = metadata.manufacturingDate;
+        if (typeof dStr === 'string' && dStr.includes('/')) {
+          const parts = dStr.split('/');
+          if (parts.length === 3 && parts[0].length === 2 && parts[1].length === 2 && parts[2].length === 4) {
+            dStr = `${parts[2]}-${parts[1]}-${parts[0]}`; // Convert DD/MM/YYYY to YYYY-MM-DD
+          }
+        }
+        const d = new Date(dStr);
+        if (isNaN(d.getTime())) return '';
+        return d.toISOString().split('T')[0];
+      } catch(e) { return ''; }
+    })(),
+    expiryDate: (function() {
+      if (metadata.expiryDate instanceof Date) return metadata.expiryDate.toISOString().split('T')[0];
+      if (!metadata.expiryDate) return '';
+      try {
+        let dStr = metadata.expiryDate;
+        if (typeof dStr === 'string' && dStr.includes('/')) {
+          const parts = dStr.split('/');
+          if (parts.length === 3 && parts[0].length === 2 && parts[1].length === 2 && parts[2].length === 4) {
+            dStr = `${parts[2]}-${parts[1]}-${parts[0]}`; // Convert DD/MM/YYYY to YYYY-MM-DD
+          }
+        }
+        const d = new Date(dStr);
+        if (isNaN(d.getTime())) return '';
+        return d.toISOString().split('T')[0];
+      } catch(e) { return ''; }
+    })(),
     quantity: Number(metadata.quantity || 1),
     manufacturer: String(metadata.manufacturer || '').toLowerCase()
   };

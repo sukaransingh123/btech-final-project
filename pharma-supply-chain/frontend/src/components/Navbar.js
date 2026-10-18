@@ -5,9 +5,7 @@ const Navbar = ({ account, userRole, onDisconnect, networkLabel, balanceLabel })
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const getRoleName = (role) => {
-    if (role == null || role === undefined) {
-      return 'Not Connected';
-    }
+    if (role == null || role === undefined) return 'Not Connected';
     switch (Number(role)) {
       case 1: return 'Manufacturer';
       case 2: return 'Distributor';
@@ -18,133 +16,137 @@ const Navbar = ({ account, userRole, onDisconnect, networkLabel, balanceLabel })
     }
   };
 
-  // Fixed: use Number(role) for consistent comparison
   const getRoleBadgeClass = (role) => {
     switch (Number(role)) {
-      case 1: return 'bg-blue-100 text-blue-800';
-      case 2: return 'bg-purple-100 text-purple-800';
-      case 3: return 'bg-green-100 text-green-800';
-      case 4: return 'bg-orange-100 text-orange-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case 1: return 'badge badge-gold';
+      case 2: return 'badge badge-purple';
+      case 3: return 'badge badge-green';
+      case 4: return 'badge badge-blue';
+      default: return 'badge badge-blue';
     }
   };
 
   return (
-    <nav className="bg-gradient-to-r from-blue-700 to-indigo-800 text-white shadow-lg sticky top-0 z-50">
+    <nav style={{
+      background: 'linear-gradient(90deg, #081526 0%, #0f2035 60%, #162d4a 100%)',
+      borderBottom: '1px solid rgba(251,191,36,0.2)',
+      position: 'sticky', top: 0, zIndex: 50,
+      boxShadow: '0 4px 24px rgba(0,0,0,0.4)'
+    }}>
       <div className="max-w-7xl mx-auto px-4">
         <div className="flex items-center justify-between h-16">
-          {/* Logo & Title */}
-          <div className="flex items-center gap-4">
-            <Link to={account ? "/" : "/verify-batch"} className="flex items-center gap-2">
-              <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M4 4a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2H4zm3 1h6v4H7V5zm8 8H5v-2h10v2z" clipRule="evenodd" />
-              </svg>
-              <span className="text-xl font-bold hidden sm:inline">PharmaTrust</span>
+
+          {/* Logo */}
+          <div className="flex items-center gap-6">
+            <Link to={account ? "/" : "/verify-batch"} className="flex items-center gap-3" style={{textDecoration:'none'}}>
+              <div style={{
+                background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                borderRadius: '10px', padding: '7px',
+                boxShadow: '0 0 14px rgba(245,158,11,0.4)'
+              }}>
+                <svg className="w-5 h-5" fill="#0f2035" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M4 4a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2H4zm3 1h6v4H7V5zm8 8H5v-2h10v2z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <span style={{
+                fontSize: '1.2rem', fontWeight: 800, letterSpacing: '-0.5px',
+                background: 'linear-gradient(90deg, #f59e0b, #fbbf24)',
+                WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent'
+              }} className="hidden sm:inline">
+                PharmaTrust
+              </span>
             </Link>
-            
-            {/* Desktop Navigation */}
-            <div className="hidden md:flex items-center gap-4 ml-8">
-              <Link to="/" className="hover:text-blue-200 transition-colors font-medium">
-                Dashboard
-              </Link>
-              {userRole === 1 && (
-                <>
-                  <Link to="/create-batch" className="hover:text-blue-200 transition-colors font-medium">
-                    Create Batch
-                  </Link>
-                  <Link to="/generate-qr" className="hover:text-blue-200 transition-colors font-medium">
-                    Generate QR
-                  </Link>
-                </>
-              )}
-              {/* Fixed: Manufacturer (1) can also transfer, plus Distributor (2), Retailer (3), Pharmacy (4) */}
-              {(userRole === 1 || userRole === 2 || userRole === 3 || userRole === 4) && (
-                <Link to="/transfer-batch" className="hover:text-blue-200 transition-colors font-medium">
-                  Transfer Batch
+
+            {/* Desktop Nav Links */}
+            <div className="hidden md:flex items-center gap-1">
+              {[
+                { to: '/', label: 'Dashboard', show: true },
+                { to: '/create-batch', label: 'Create Batch', show: userRole === 1 },
+                { to: '/generate-qr', label: 'Generate QR', show: userRole === 1 },
+                { to: '/transfer-batch', label: 'Transfer Batch', show: [1,2,3,4].includes(Number(userRole)) },
+                { to: '/verify-batch', label: 'Verify', show: userRole !== 1 },
+              ].filter(l => l.show).map(link => (
+                <Link key={link.to} to={link.to} style={{
+                  color: '#94a3b8', padding: '6px 14px', borderRadius: '8px',
+                  textDecoration: 'none', fontSize: '14px', fontWeight: 500,
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={e => { e.target.style.color='#f59e0b'; e.target.style.background='rgba(245,158,11,0.08)'; }}
+                onMouseLeave={e => { e.target.style.color='#94a3b8'; e.target.style.background='transparent'; }}>
+                  {link.label}
                 </Link>
-              )}
-              {(userRole !== 1) && (
-                <Link to="/verify-batch" className="hover:text-blue-200 transition-colors font-medium">
-                  Verify
-                </Link>
-              )}
+              ))}
             </div>
           </div>
 
-          {/* User Info & Actions */}
-          <div className="flex items-center gap-4">
-            {/* Desktop User Info */}
-            <div className="hidden md:flex items-center gap-6 ml-6">
-              {networkLabel && (
-                <div className="text-xs text-blue-200 whitespace-nowrap text-right flex flex-col justify-center">
-                  <span className="font-medium opacity-80">{networkLabel}</span>
-                  {balanceLabel && <span className="font-bold opacity-100">{balanceLabel}</span>}
-                </div>
-              )}
-              <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getRoleBadgeClass(userRole)}`}>
-                {getRoleName(userRole)}
-              </span>
-              <div className="text-sm font-mono bg-blue-900/30 px-3 py-1 rounded-lg">
-                {account ? `${account.slice(0, 6)}...${account.slice(-4)}` : 'Not connected'}
+          {/* Right Side */}
+          <div className="hidden md:flex items-center gap-3">
+            {networkLabel && (
+              <div style={{textAlign:'right', lineHeight:'1.2'}}>
+                <div style={{fontSize:'11px', color:'#64748b', fontWeight:500}}>{networkLabel}</div>
+                {balanceLabel && <div style={{fontSize:'13px', color:'#f59e0b', fontWeight:700}}>{balanceLabel}</div>}
               </div>
-              <button 
-                onClick={onDisconnect}
-                className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-              >
-                Disconnect
-              </button>
+            )}
+            <span className={getRoleBadgeClass(userRole)}>{getRoleName(userRole)}</span>
+            <div style={{
+              fontFamily:'monospace', fontSize:'13px',
+              background:'rgba(15,32,53,0.8)', border:'1px solid rgba(251,191,36,0.2)',
+              padding:'6px 12px', borderRadius:'8px', color:'#94a3b8'
+            }}>
+              {account ? `${account.slice(0,6)}...${account.slice(-4)}` : 'Not connected'}
             </div>
-
-            {/* Mobile Menu Button */}
-            <button
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden p-2 rounded-lg hover:bg-blue-800"
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                {mobileMenuOpen ? (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                ) : (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                )}
-              </svg>
+            <button onClick={onDisconnect} style={{
+              background:'rgba(239,68,68,0.15)', color:'#ef4444',
+              border:'1px solid rgba(239,68,68,0.3)', padding:'7px 16px',
+              borderRadius:'8px', fontSize:'13px', fontWeight:600, cursor:'pointer',
+              transition:'all 0.2s'
+            }}
+            onMouseEnter={e => e.target.style.background='rgba(239,68,68,0.3)'}
+            onMouseLeave={e => e.target.style.background='rgba(239,68,68,0.15)'}>
+              Disconnect
             </button>
           </div>
+
+          {/* Mobile Menu Button */}
+          <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="md:hidden p-2 rounded-lg"
+            style={{color:'#94a3b8', background:'rgba(30,58,95,0.4)', border:'1px solid rgba(251,191,36,0.15)'}}>
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              {mobileMenuOpen
+                ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />}
+            </svg>
+          </button>
         </div>
 
-        {/* Mobile Menu — Fixed: all links now present including Transfer Batch */}
+        {/* Mobile Menu */}
         {mobileMenuOpen && (
-          <div className="md:hidden py-4 border-t border-blue-600">
-            <div className="flex flex-col gap-2">
-              <Link to="/" className="px-4 py-2 hover:bg-blue-800 rounded-lg" onClick={() => setMobileMenuOpen(false)}>Dashboard</Link>
-              {userRole === 1 && (
-                <>
-                  <Link to="/create-batch" className="px-4 py-2 hover:bg-blue-800 rounded-lg" onClick={() => setMobileMenuOpen(false)}>Create Batch</Link>
-                  <Link to="/generate-qr" className="px-4 py-2 hover:bg-blue-800 rounded-lg" onClick={() => setMobileMenuOpen(false)}>Generate QR</Link>
-                </>
-              )}
-              {/* Fixed: Transfer Batch now appears in mobile menu for all eligible roles */}
-              {(userRole === 1 || userRole === 2 || userRole === 3 || userRole === 4) && (
-                <Link to="/transfer-batch" className="px-4 py-2 hover:bg-blue-800 rounded-lg" onClick={() => setMobileMenuOpen(false)}>Transfer Batch</Link>
-              )}
-              {(userRole !== 1) && (
-                <Link to="/verify-batch" className="px-4 py-2 hover:bg-blue-800 rounded-lg" onClick={() => setMobileMenuOpen(false)}>Verify</Link>
-              )}
-              <div className="px-4 py-2 border-t border-blue-600 mt-2 pt-2">
-                <div className="text-xs text-blue-200 mb-2">
-                  {networkLabel} {balanceLabel && `• ${balanceLabel}`}
+          <div style={{borderTop:'1px solid rgba(251,191,36,0.15)', padding:'16px 0'}}>
+            <div className="flex flex-col gap-1">
+              {[
+                { to: '/', label: 'Dashboard', show: true },
+                { to: '/create-batch', label: 'Create Batch', show: userRole === 1 },
+                { to: '/generate-qr', label: 'Generate QR', show: userRole === 1 },
+                { to: '/transfer-batch', label: 'Transfer Batch', show: [1,2,3,4].includes(Number(userRole)) },
+                { to: '/verify-batch', label: 'Verify', show: userRole !== 1 },
+              ].filter(l => l.show).map(link => (
+                <Link key={link.to} to={link.to}
+                  onClick={() => setMobileMenuOpen(false)}
+                  style={{color:'#94a3b8', padding:'10px 16px', borderRadius:'8px', textDecoration:'none', fontWeight:500}}>
+                  {link.label}
+                </Link>
+              ))}
+              <div style={{borderTop:'1px solid rgba(251,191,36,0.1)', marginTop:'8px', paddingTop:'12px', paddingLeft:'16px'}}>
+                {networkLabel && <div style={{fontSize:'12px', color:'#64748b', marginBottom:'6px'}}>{networkLabel} {balanceLabel && `• ${balanceLabel}`}</div>}
+                <span className={getRoleBadgeClass(userRole)} style={{marginBottom:'8px', display:'inline-block'}}>{getRoleName(userRole)}</span>
+                <div style={{fontFamily:'monospace', fontSize:'13px', color:'#94a3b8', marginBottom:'10px'}}>
+                  {account ? `${account.slice(0,6)}...${account.slice(-4)}` : 'Not connected'}
                 </div>
-                <div className={`inline-block px-3 py-1 rounded-full text-xs font-semibold mb-2 ${getRoleBadgeClass(userRole)}`}>
-                  {getRoleName(userRole)}
-                </div>
-                <div className="text-sm font-mono mb-2">
-                  {account ? `${account.slice(0, 6)}...${account.slice(-4)}` : 'Not connected'}
-                </div>
-                <button 
-                  onClick={onDisconnect}
-                  className="w-full bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                >
-                  Disconnect
-                </button>
+                <button onClick={onDisconnect} style={{
+                  background:'rgba(239,68,68,0.15)', color:'#ef4444',
+                  border:'1px solid rgba(239,68,68,0.3)', padding:'8px 20px',
+                  borderRadius:'8px', fontSize:'13px', fontWeight:600, cursor:'pointer', width:'100%'
+                }}>Disconnect</button>
               </div>
             </div>
           </div>

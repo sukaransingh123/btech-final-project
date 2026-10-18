@@ -238,10 +238,15 @@ const TransferBatch = ({ contract, account }) => {
             : '';
       if (!recipientAddress || !ethers.isAddress(recipientAddress)) throw new Error('Enter a valid recipient wallet address');
 
-      // Verify sender owns the selected parent
-      const owner = await contract.ownerOf(selectedBatch);
+      // Verify sender owns the selected parent (wrap in try-catch for stale DB data)
+      let owner;
+      try {
+        owner = await contract.ownerOf(selectedBatch);
+      } catch (ownerErr) {
+        throw new Error(`Token #${selectedBatch} not found on-chain. It may be stale data — click "Reload Batches" and try again.`);
+      }
       if (owner.toLowerCase() !== account.toLowerCase()) {
-        throw new Error('You are not the current owner of this parent batch');
+        throw new Error('You are not the current owner of this batch');
       }
 
       // Check if recipient has a role assigned
@@ -479,13 +484,22 @@ const TransferBatch = ({ contract, account }) => {
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 py-8">
       <div className="max-w-3xl mx-auto px-4">
         <div className="bg-white rounded-2xl shadow-xl p-8">
-          <div className="flex items-center gap-3 mb-8">
-            <div className="p-3 bg-green-100 rounded-xl">
-              <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-              </svg>
+          <div className="flex items-center justify-between gap-3 mb-8">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-green-100 rounded-xl">
+                <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                </svg>
+              </div>
+              <h1 className="text-3xl font-bold text-gray-900">Transfer Batch</h1>
             </div>
-            <h1 className="text-3xl font-bold text-gray-900">Transfer Batch</h1>
+            <button
+              onClick={loadUserBatches}
+              disabled={loading}
+              style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', color: '#d97706', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              🔄 Reload Batches
+            </button>
           </div>
           
           {message && (

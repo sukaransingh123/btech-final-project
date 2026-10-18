@@ -249,7 +249,7 @@ function App() {
           onDisconnect={disconnectWallet}
         />
         
-        <div className="container">
+        <div style={{ background: '#081526', minHeight: '100vh', width: '100%', margin: 0, padding: 0 }}>
           <Routes>
             {/* Verify routes - ALWAYS accessible, no MetaMask required */}
             <Route path="/verify-batch" element={<VerifyBatch contract={contract} readContract={readContract} account={account} />} />
@@ -278,19 +278,74 @@ function App() {
             ) : (
               <>
                 <Route path="/" element={
-                  <div className="card" style={{ textAlign: 'center', marginTop: '100px' }}>
-                    <h1>Pharma Supply Chain Tracker</h1>
-                    <p>Connect your MetaMask wallet to access the pharmaceutical supply chain system.</p>
-                    <p style={{ fontSize: '14px', color: '#666', marginTop: '10px' }}>
-                      Or <a href="/supply-chain-tracker" style={{ color: '#4F46E5' }}>track a Phase 1 batch</a> without connecting (for consumers)
-                    </p>
-                    <button 
-                      className="btn" 
-                      onClick={connectWallet}
-                      disabled={loading}
-                    >
-                      {loading ? 'Connecting...' : 'Connect MetaMask'}
-                    </button>
+                  <div style={{
+                    minHeight:'100vh',
+                    background:'linear-gradient(135deg,#081526 0%,#0f2035 55%,#162d4a 100%)',
+                    display:'flex', alignItems:'center', justifyContent:'center',
+                    fontFamily:'Inter,system-ui,sans-serif', padding:'24px'
+                  }}>
+                    <div style={{
+                      background:'linear-gradient(135deg,rgba(30,58,95,0.7),rgba(22,45,74,0.9))',
+                      border:'1px solid rgba(251,191,36,0.2)',
+                      borderRadius:'24px', padding:'56px 48px', maxWidth:'520px', width:'100%',
+                      textAlign:'center', boxShadow:'0 24px 80px rgba(0,0,0,0.5)'
+                    }}>
+                      {/* Logo icon */}
+                      <div style={{display:'flex',justifyContent:'center',marginBottom:'28px'}}>
+                        <div style={{
+                          background:'linear-gradient(135deg,#f59e0b,#d97706)',
+                          borderRadius:'20px', padding:'18px',
+                          boxShadow:'0 0 30px rgba(245,158,11,0.4)'
+                        }}>
+                          <svg style={{width:'40px',height:'40px'}} fill="#0f2035" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M4 4a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2H4zm3 1h6v4H7V5zm8 8H5v-2h10v2z" clipRule="evenodd" />
+                          </svg>
+                        </div>
+                      </div>
+                      <h1 style={{
+                        fontSize:'2.2rem', fontWeight:800, letterSpacing:'-0.5px',
+                        background:'linear-gradient(90deg,#f59e0b,#fbbf24)',
+                        WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent',
+                        marginBottom:'12px'
+                      }}>PharmaTrust</h1>
+                      <p style={{color:'#94a3b8', fontSize:'16px', marginBottom:'8px', fontWeight:500}}>
+                        Pharmaceutical Supply Chain
+                      </p>
+                      <p style={{color:'#475569', fontSize:'13px', marginBottom:'36px'}}>
+                        Powered by Polygon Blockchain · NFT-based Batch Tracking
+                      </p>
+
+                      {/* Feature pills */}
+                      <div style={{display:'flex', flexWrap:'wrap', gap:'8px', justifyContent:'center', marginBottom:'36px'}}>
+                        {['🔗 Blockchain Secured','🧾 NFT Batch Tokens','🔍 QR Verification','📦 Supply Chain Audit'].map(f => (
+                          <span key={f} style={{
+                            background:'rgba(245,158,11,0.08)', border:'1px solid rgba(245,158,11,0.2)',
+                            color:'#f59e0b', padding:'5px 12px', borderRadius:'999px', fontSize:'12px', fontWeight:500
+                          }}>{f}</span>
+                        ))}
+                      </div>
+
+                      <button onClick={connectWallet} disabled={loading} style={{
+                        background: loading ? 'rgba(245,158,11,0.4)' : 'linear-gradient(135deg,#f59e0b,#d97706)',
+                        color:'#0f2035', border:'none', borderRadius:'12px',
+                        padding:'14px 40px', fontSize:'16px', fontWeight:700,
+                        cursor: loading ? 'not-allowed' : 'pointer', width:'100%',
+                        boxShadow:'0 4px 20px rgba(245,158,11,0.35)',
+                        transition:'all 0.2s', display:'flex', alignItems:'center', justifyContent:'center', gap:'10px'
+                      }}>
+                        <svg style={{width:'20px',height:'20px'}} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/>
+                        </svg>
+                        {loading ? 'Connecting…' : 'Connect MetaMask'}
+                      </button>
+
+                      <p style={{color:'#334155', fontSize:'12px', marginTop:'20px'}}>
+                        Don't have access?{' '}
+                        <a href="/verify-batch" style={{color:'#f59e0b', textDecoration:'none', fontWeight:600}}>
+                          Scan &amp; Verify a batch →
+                        </a>
+                      </p>
+                    </div>
                   </div>
                 } />
                 <Route path="*" element={<Navigate to="/verify-batch" replace />} />

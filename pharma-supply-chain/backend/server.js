@@ -18,21 +18,24 @@ app.use(express.urlencoded({ extended: true }));
 // Serve static files (uploaded QA certificates)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// MongoDB Connection
+// MongoDB Connection — non-blocking: server starts even if Atlas is paused
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/pharma-supply-chain';
+global.mongoAvailable = false;
 
 mongoose.connect(MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 5000, // give up after 5s, don't hang
+  connectTimeoutMS: 5000,
 })
 .then(() => {
+  global.mongoAvailable = true;
   console.log('✅ MongoDB connected successfully');
-  
-  // Start blockchain event listeners after DB connection
-  require('./listeners/blockchainListener');
+  try { require('./listeners/blockchainListener'); } catch(e) {}
 })
 .catch((error) => {
-  console.error('❌ MongoDB connection error:', error);
+  global.mongoAvailable = false;
+  console.error('⚠️  MongoDB unavailable (Atlas may be paused) — running in blockchain-only mode');
 });
 
 // Routes
